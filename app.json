@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "R3mote",
+    "slug": "r3mote",
+    "version": "1.0.0",
+    "scheme": "r3mote",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.family.r3mote",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "R3mote discovers and controls TVs on your home network."
+      }
+    },
+    "android": {
+      "package": "com.family.r3mote",
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "ACCESS_WIFI_STATE",
+        "VIBRATE"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-dev-client",
+      "expo-asset"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
