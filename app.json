@@ -20,6 +20,8 @@
         "INTERNET",
         "ACCESS_NETWORK_STATE",
         "ACCESS_WIFI_STATE",
+        "CHANGE_WIFI_MULTICAST_STATE",
+        "TRANSMIT_IR",
         "VIBRATE"
       ]
     },

@@ -8,8 +8,10 @@ export interface SavedTV {
   model?: string;
   mac?: string;
   authToken?: string;
+  authKey?: string;
   clientKey?: string;
   psk?: string;
+  irBrand?: string;
   certificate?: {
     key?: string | null;
     cert?: string | null;
@@ -34,6 +36,7 @@ export interface ManualAddInput {
   brand: TVBrand;
   ip: string;
   psk?: string;
+  irBrand?: string;
 }
 
 export interface PairingPrompt {

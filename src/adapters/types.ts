@@ -5,7 +5,8 @@ export type TVBrand =
   | "sony"
   | "vizio"
   | "androidtv"
-  | "firetv";
+  | "firetv"
+  | "ir";
 
 export type RemoteKey =
   | "power"

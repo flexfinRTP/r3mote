@@ -88,7 +88,8 @@ export default function RemoteScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.connectionRow}>
           <Text style={styles.connectionText}>
-            Connected to {tv.name} ({tv.brand.toUpperCase()})
+            {tv.brand === "ir" ? "IR Blaster" : "Connected to"} {tv.name}
+            {tv.brand !== "ir" ? ` (${tv.brand.toUpperCase()})` : ""}
           </Text>
           <View style={styles.connectionActions}>
             <Pressable

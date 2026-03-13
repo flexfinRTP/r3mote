@@ -52,7 +52,8 @@ const BRAND_LABEL: Record<TVBrand, string> = {
   sony: "Sony Bravia",
   vizio: "Vizio TV",
   androidtv: "Android TV / Google TV",
-  firetv: "Fire TV"
+  firetv: "Fire TV",
+  ir: "IR Blaster",
 };
 
 const pairingPromptFor = (tv: SavedTV, message?: string): PairingPrompt => {
@@ -136,6 +137,9 @@ const connectFailureFor = (tv: SavedTV, message?: string): string => {
   if (tv.brand === "firetv") {
     return `${prefix} Enable ADB Debugging and keep Fire TV awake during pairing. ${raw}`.trim();
   }
+  if (tv.brand === "ir") {
+    return `${prefix} Make sure your phone has an IR blaster and point it at the TV. ${raw}`.trim();
+  }
   return raw ? `${prefix} ${raw}` : prefix;
 };
 
@@ -186,10 +190,11 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       id: makeId(),
       name: input.name || `${input.brand.toUpperCase()} TV`,
       brand: input.brand,
-      ip: input.ip,
-      psk: input.psk,
+      ip: input.brand === "ir" ? "ir-local" : input.ip,
+      psk: input.brand === "ir" ? input.irBrand : input.psk,
+      irBrand: input.irBrand,
       favorite: false,
-      lastSeen: now()
+      lastSeen: now(),
     };
   }, []);
 
@@ -271,16 +276,18 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   const addOrConnectManualTV = useCallback(
     async (input: ManualAddInput): Promise<SavedTV | null> => {
+      const matchIp = input.brand === "ir" ? "ir-local" : input.ip.trim().toLowerCase();
       const existing = tvs.find(
         (item) =>
           item.brand === input.brand &&
-          item.ip.trim().toLowerCase() === input.ip.trim().toLowerCase()
+          item.ip.trim().toLowerCase() === matchIp
       );
       if (existing) {
         const mergedExisting: SavedTV = {
           ...existing,
           name: input.name || existing.name,
-          psk: input.psk || existing.psk
+          psk: input.brand === "ir" ? input.irBrand : (input.psk || existing.psk),
+          irBrand: input.irBrand || existing.irBrand,
         };
         return await connectUsingTV(mergedExisting, "saved");
       }
@@ -323,9 +330,9 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         const merged: SavedTV = {
           ...pendingPairing.tv,
           authToken: result.authToken ?? pendingPairing.tv.authToken,
-          clientKey: result.clientKey ?? pendingPairing.tv.clientKey,
+          clientKey: result.clientKey ?? pendingPairing.tv.clientKey ?? pendingPairing.tv.authKey,
           certificate: result.certificate ?? pendingPairing.tv.certificate,
-          lastSeen: now()
+          lastSeen: now(),
         };
         const next = upsertTV(tvs, merged);
         await persistTVs(next);

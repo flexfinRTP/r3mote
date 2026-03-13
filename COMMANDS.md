@@ -70,7 +70,24 @@ eas build:list --limit 20
 eas build:view <BUILD_ID>
 ```
 
-## 7) Optional native run commands (local device/simulator)
+## 7) Rebuild after native dependency changes
+
+When new native modules are added (e.g., expo-network, react-native-infrared-interface),
+the dev client needs to be rebuilt:
+
+```bash
+# regenerate native projects
+npx expo prebuild --clean
+
+# then rebuild dev client
+eas build --platform android --profile preview
+
+# or local build (requires Android SDK)
+cd android && .\gradlew.bat assembleDebug && cd ..
+# APK output: android\app\build\outputs\apk\debug\app-debug.apk
+```
+
+## 8) Optional native run commands (local device/simulator)
 
 ```bash
 # android native run
@@ -80,7 +97,7 @@ npm run android
 npm run ios
 ```
 
-## 8) Recommended release flow
+## 9) Recommended release flow
 
 ```bash
 # 1) install/update deps

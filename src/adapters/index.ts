@@ -1,5 +1,6 @@
 import { AndroidTVAdapter } from "./androidtv";
 import { FireTVAdapter } from "./firetv";
+import { IRAdapter } from "./ir";
 import { LGAdapter } from "./lg";
 import { RokuAdapter } from "./roku";
 import { SamsungAdapter } from "./samsung";
@@ -25,6 +26,8 @@ export const createAdapter = (brand: TVBrand): TVAdapter => {
       return new AndroidTVAdapter();
     case "firetv":
       return new FireTVAdapter();
+    case "ir":
+      return new IRAdapter();
     default:
       return new RokuAdapter();
   }

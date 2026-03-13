@@ -31,6 +31,40 @@ const parseHeaders = (raw: string): Record<string, string> => {
   return headers;
 };
 
+const decodeUdpMessage = (msg: unknown): string => {
+  if (typeof msg === "string") {
+    return msg;
+  }
+  try {
+    if (msg instanceof Uint8Array) {
+      return new TextDecoder().decode(msg);
+    }
+  } catch {
+    // ignore and fallback
+  }
+  try {
+    const maybeBuffer = msg as { buffer?: ArrayBuffer };
+    if (maybeBuffer?.buffer) {
+      return new TextDecoder().decode(new Uint8Array(maybeBuffer.buffer));
+    }
+  } catch {
+    // ignore and fallback
+  }
+  return String(msg ?? "");
+};
+
+const encodeUdpMessage = (text: string): Uint8Array => {
+  try {
+    return new TextEncoder().encode(text);
+  } catch {
+    const bytes = new Uint8Array(text.length);
+    for (let i = 0; i < text.length; i += 1) {
+      bytes[i] = text.charCodeAt(i) & 0xff;
+    }
+    return bytes;
+  }
+};
+
 const inferBrand = (headers: Record<string, string>): TVBrand | null => {
   const st = (headers.st || "").toLowerCase();
   const usn = (headers.usn || "").toLowerCase();
@@ -61,9 +95,13 @@ export const scanSSDP = async (timeoutMs = 3000): Promise<DiscoveryDevice[]> => 
   return await new Promise<DiscoveryDevice[]>((resolve) => {
     const socket = dgram.createSocket({ type: "udp4", reusePort: true });
     const devices = new Map<string, DiscoveryDevice>();
+    let hadSocketError = false;
 
     socket.on("message", (msg: any, rinfo: { address: string }) => {
-      const text = String(msg);
+      const text = decodeUdpMessage(msg);
+      if (!text.includes("HTTP/1.1")) {
+        return;
+      }
       const headers = parseHeaders(text);
       const brand = inferBrand(headers);
       if (!brand) return;
@@ -84,6 +122,10 @@ export const scanSSDP = async (timeoutMs = 3000): Promise<DiscoveryDevice[]> => 
       });
     });
 
+    socket.on("error", () => {
+      hadSocketError = true;
+    });
+
     socket.bind(0, () => {
       for (const target of TARGETS) {
         const packet =
@@ -92,7 +134,12 @@ export const scanSSDP = async (timeoutMs = 3000): Promise<DiscoveryDevice[]> => 
           'MAN: "ssdp:discover"\r\n' +
           "MX: 1\r\n" +
           `ST: ${target.st}\r\n\r\n`;
-        socket.send(packet, 0, packet.length, SSDP_PORT, SSDP_ADDRESS);
+        const payload = encodeUdpMessage(packet);
+        try {
+          socket.send(payload, 0, payload.length, SSDP_PORT, SSDP_ADDRESS);
+        } catch {
+          hadSocketError = true;
+        }
       }
     });
 
@@ -106,6 +153,9 @@ export const scanSSDP = async (timeoutMs = 3000): Promise<DiscoveryDevice[]> => 
         ...d,
         id: d.id || makeId()
       }));
+      if (hadSocketError) {
+        // Keep returning best effort results even when multicast is restricted.
+      }
       resolve(result);
     }, timeoutMs);
   });

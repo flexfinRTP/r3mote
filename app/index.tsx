@@ -5,27 +5,31 @@ import {
   Alert,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  View
+  View,
 } from "react-native";
 import type { TVBrand } from "@/adapters";
+import { checkIRAvailable } from "@/adapters/ir";
 import { TVCard } from "@/components/TVCard";
+import { IR_BRAND_KEYS, IR_BRAND_LABELS, type IRBrandKey } from "@/data/irCodes";
 import { useDiscovery } from "@/hooks/useDiscovery";
 import { useTV } from "@/hooks/useTV";
 import { theme } from "@/theme";
 
-const brandOptions: TVBrand[] = [
+const wifiBrandOptions: TVBrand[] = [
   "roku",
   "samsung",
   "lg",
   "sony",
   "vizio",
   "androidtv",
-  "firetv"
+  "firetv",
 ];
 
 const manualBrandHelp: Record<TVBrand, string> = {
@@ -38,7 +42,8 @@ const manualBrandHelp: Record<TVBrand, string> = {
   vizio: "Vizio: app will ask for on-screen TV PIN during pairing.",
   androidtv: "Android TV: app will ask for 6-digit code shown on TV.",
   firetv:
-    "Fire TV: enable ADB Debugging in Developer Options, then pair with on-screen prompt."
+    "Fire TV: enable ADB Debugging in Developer Options, then pair with on-screen prompt.",
+  ir: "IR Blaster: uses your phone's built-in infrared. Point phone at TV. Android only.",
 };
 
 export default function HomeScreen() {
@@ -54,16 +59,18 @@ export default function HomeScreen() {
     addOrConnectManualTV,
     connectToSavedTV,
     bootstrapScanRequested,
-    consumeBootstrapScanRequest
+    consumeBootstrapScanRequest,
   } = useTV();
-  const { devices, loading, error, scan } = useDiscovery();
+  const { devices, loading, error, lastScanSummary, scanProgress, scan } =
+    useDiscovery();
 
   const [manualOpen, setManualOpen] = useState(false);
   const [manualName, setManualName] = useState("");
   const [manualBrand, setManualBrand] = useState<TVBrand>("roku");
   const [manualIp, setManualIp] = useState("");
   const [manualPsk, setManualPsk] = useState("");
-
+  const [manualIrBrand, setManualIrBrand] = useState<IRBrandKey>("universal");
+  const [hasIR, setHasIR] = useState(false);
   const [pairingCode, setPairingCode] = useState("");
 
   useEffect(() => {
@@ -74,7 +81,11 @@ export default function HomeScreen() {
     }
   }, [hydrated, bootstrapScanRequested, consumeBootstrapScanRequest, scan]);
 
-  const isReady = hydrated;
+  useEffect(() => {
+    if (Platform.OS === "android") {
+      checkIRAvailable().then(setHasIR);
+    }
+  }, []);
 
   const knownDevices = useMemo(() => devices, [devices]);
 
@@ -103,7 +114,7 @@ export default function HomeScreen() {
 
   const submitManual = async () => {
     if (connecting) return;
-    if (!manualIp.trim()) {
+    if (manualBrand !== "ir" && !manualIp.trim()) {
       Alert.alert("Missing IP", "Please enter a valid TV IP address.");
       return;
     }
@@ -112,10 +123,15 @@ export default function HomeScreen() {
       return;
     }
     const connected = await addOrConnectManualTV({
-      name: manualName.trim() || `${manualBrand.toUpperCase()} TV`,
+      name:
+        manualName.trim() ||
+        (manualBrand === "ir"
+          ? `IR - ${IR_BRAND_LABELS[manualIrBrand]}`
+          : `${manualBrand.toUpperCase()} TV`),
       brand: manualBrand,
-      ip: manualIp.trim(),
-      psk: manualBrand === "sony" ? manualPsk.trim() : undefined
+      ip: manualBrand === "ir" ? "ir-local" : manualIp.trim(),
+      psk: manualBrand === "sony" ? manualPsk.trim() : undefined,
+      irBrand: manualBrand === "ir" ? manualIrBrand : undefined,
     });
     if (connected) {
       setManualOpen(false);
@@ -125,9 +141,7 @@ export default function HomeScreen() {
 
   const submitCode = async () => {
     if (connecting) return;
-    if (!pairingCode.trim()) {
-      return;
-    }
+    if (!pairingCode.trim()) return;
     const connected = await submitPairingCode(pairingCode.trim());
     if (connected) {
       setPairingCode("");
@@ -135,7 +149,7 @@ export default function HomeScreen() {
     }
   };
 
-  if (!isReady) {
+  if (!hydrated) {
     return (
       <SafeAreaView style={styles.centered}>
         <ActivityIndicator color={theme.colors.text} />
@@ -143,24 +157,55 @@ export default function HomeScreen() {
     );
   }
 
+  const allBrandOptions: TVBrand[] = hasIR
+    ? [...wifiBrandOptions, "ir"]
+    : wifiBrandOptions;
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.topBar}>
         <Text style={styles.heading}>R3mote</Text>
         <View style={styles.actions}>
-          <Pressable style={styles.actionBtn} onPress={() => router.push("/settings" as never)}>
+          <Pressable
+            style={styles.actionBtn}
+            onPress={() => router.push("/settings" as never)}
+          >
             <Text style={styles.actionText}>Settings</Text>
           </Pressable>
-          <Pressable style={styles.actionBtn} onPress={scan} disabled={loading || connecting}>
-            <Text style={styles.actionText}>{loading ? "Scanning..." : "Scan"}</Text>
+          <Pressable
+            style={styles.actionBtn}
+            onPress={scan}
+            disabled={loading || connecting}
+          >
+            <Text style={styles.actionText}>
+              {loading ? "Scanning..." : "Scan"}
+            </Text>
           </Pressable>
         </View>
       </View>
+
+      {loading && scanProgress > 0 ? (
+        <View style={styles.progressWrap}>
+          <View style={styles.progressTrack}>
+            <View
+              style={[styles.progressFill, { width: `${scanProgress}%` }]}
+            />
+          </View>
+          <Text style={styles.progressText}>
+            Scanning network... {scanProgress}%
+          </Text>
+        </View>
+      ) : null}
 
       {statusMessage ? (
         <Pressable style={styles.banner} onPress={clearStatus}>
           <Text style={styles.bannerText}>{statusMessage}</Text>
         </Pressable>
+      ) : null}
+      {lastScanSummary && !loading ? (
+        <View style={styles.bannerInfo}>
+          <Text style={styles.bannerInfoText}>{lastScanSummary}</Text>
+        </View>
       ) : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -169,7 +214,11 @@ export default function HomeScreen() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
         ListEmptyComponent={
-          <Text style={styles.empty}>No TVs found yet. Tap Scan or Add TV manually.</Text>
+          <Text style={styles.empty}>
+            {loading
+              ? "Searching for TVs on your network..."
+              : "No TVs found yet. Tap Scan or Add TV manually."}
+          </Text>
         }
         renderItem={({ item }) => (
           <TVCard item={item} onPress={() => onDevicePress(item)} />
@@ -184,76 +233,113 @@ export default function HomeScreen() {
           setManualBrand("roku");
           setManualIp("");
           setManualPsk("");
+          setManualIrBrand("universal");
           setManualOpen(true);
         }}
       >
         <Text style={styles.addBtnText}>+ Add TV Manually</Text>
       </Pressable>
 
+      {/* Manual Add Modal */}
       <Modal visible={manualOpen} animationType="slide" transparent>
         <View style={styles.modalBackdrop}>
-          <View style={styles.modal}>
-            <Text style={styles.modalTitle}>Add TV</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Name (e.g. Living Room TV)"
-              placeholderTextColor={theme.colors.textSecondary}
-              value={manualName}
-              onChangeText={setManualName}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="TV IP Address (e.g. 192.168.1.50)"
-              placeholderTextColor={theme.colors.textSecondary}
-              autoCapitalize="none"
-              value={manualIp}
-              onChangeText={setManualIp}
-            />
+          <ScrollView contentContainerStyle={styles.modalScrollContent}>
+            <View style={styles.modal}>
+              <Text style={styles.modalTitle}>Add TV</Text>
 
-            <View style={styles.brandWrap}>
-              {brandOptions.map((brand) => (
-                <Pressable
-                  key={brand}
-                  style={[
-                    styles.brandPill,
-                    manualBrand === brand && styles.brandPillSelected
-                  ]}
-                  onPress={() => setManualBrand(brand)}
-                >
-                  <Text style={styles.brandPillText}>{brand.toUpperCase()}</Text>
-                </Pressable>
-              ))}
-            </View>
-            <Text style={styles.helpText}>{manualBrandHelp[manualBrand]}</Text>
-
-            {manualBrand === "sony" ? (
               <TextInput
                 style={styles.input}
-                placeholder="Sony Pre-Shared Key"
+                placeholder="Name (e.g. Living Room TV)"
                 placeholderTextColor={theme.colors.textSecondary}
-                value={manualPsk}
-                onChangeText={setManualPsk}
+                value={manualName}
+                onChangeText={setManualName}
               />
-            ) : null}
 
-            <View style={styles.modalActions}>
-              <Pressable style={styles.secondaryBtn} onPress={() => setManualOpen(false)}>
-                <Text style={styles.secondaryBtnText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.primaryBtn, connecting && styles.disabled]}
-                disabled={connecting}
-                onPress={submitManual}
-              >
-                <Text style={styles.primaryBtnText}>
-                  {connecting ? "Connecting..." : "Connect"}
-                </Text>
-              </Pressable>
+              {manualBrand !== "ir" ? (
+                <TextInput
+                  style={styles.input}
+                  placeholder="TV IP Address (e.g. 192.168.1.50)"
+                  placeholderTextColor={theme.colors.textSecondary}
+                  autoCapitalize="none"
+                  value={manualIp}
+                  onChangeText={setManualIp}
+                />
+              ) : null}
+
+              <Text style={styles.sectionLabel}>Connection Type</Text>
+              <View style={styles.brandWrap}>
+                {allBrandOptions.map((brand) => (
+                  <Pressable
+                    key={brand}
+                    style={[
+                      styles.brandPill,
+                      manualBrand === brand && styles.brandPillSelected,
+                    ]}
+                    onPress={() => setManualBrand(brand)}
+                  >
+                    <Text style={styles.brandPillText}>
+                      {brand === "ir" ? "IR BLASTER" : brand.toUpperCase()}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.helpText}>{manualBrandHelp[manualBrand]}</Text>
+
+              {manualBrand === "sony" ? (
+                <TextInput
+                  style={styles.input}
+                  placeholder="Sony Pre-Shared Key"
+                  placeholderTextColor={theme.colors.textSecondary}
+                  value={manualPsk}
+                  onChangeText={setManualPsk}
+                />
+              ) : null}
+
+              {manualBrand === "ir" ? (
+                <>
+                  <Text style={styles.sectionLabel}>TV Brand (for IR codes)</Text>
+                  <View style={styles.brandWrap}>
+                    {IR_BRAND_KEYS.map((irKey) => (
+                      <Pressable
+                        key={irKey}
+                        style={[
+                          styles.brandPill,
+                          manualIrBrand === irKey && styles.brandPillSelected,
+                        ]}
+                        onPress={() => setManualIrBrand(irKey)}
+                      >
+                        <Text style={styles.brandPillText}>
+                          {IR_BRAND_LABELS[irKey]}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              ) : null}
+
+              <View style={styles.modalActions}>
+                <Pressable
+                  style={styles.secondaryBtn}
+                  onPress={() => setManualOpen(false)}
+                >
+                  <Text style={styles.secondaryBtnText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.primaryBtn, connecting && styles.disabled]}
+                  disabled={connecting}
+                  onPress={submitManual}
+                >
+                  <Text style={styles.primaryBtnText}>
+                    {connecting ? "Connecting..." : "Connect"}
+                  </Text>
+                </Pressable>
+              </View>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
 
+      {/* Pairing Code Modal */}
       <Modal visible={Boolean(pairingPrompt)} animationType="fade" transparent>
         <View style={styles.modalBackdrop}>
           <View style={styles.modal}>
@@ -293,28 +379,28 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
-    paddingHorizontal: theme.spacing.md
+    paddingHorizontal: theme.spacing.md,
   },
   centered: {
     flex: 1,
     backgroundColor: theme.colors.background,
     justifyContent: "center",
-    alignItems: "center"
+    alignItems: "center",
   },
   topBar: {
     paddingVertical: theme.spacing.md,
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center"
+    alignItems: "center",
   },
   heading: {
     color: theme.colors.text,
     fontSize: 28,
-    fontWeight: "800"
+    fontWeight: "800",
   },
   actions: {
     flexDirection: "row",
-    gap: theme.spacing.sm
+    gap: theme.spacing.sm,
   },
   actionBtn: {
     borderRadius: theme.borderRadius.sm,
@@ -322,20 +408,39 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surface,
     paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm
+    paddingVertical: theme.spacing.sm,
   },
   actionText: {
     color: theme.colors.text,
-    fontWeight: "700"
+    fontWeight: "700",
+  },
+  progressWrap: {
+    marginBottom: theme.spacing.sm,
+  },
+  progressTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: theme.colors.surface,
+    overflow: "hidden",
+    marginBottom: 4,
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 3,
+    backgroundColor: theme.colors.primary,
+  },
+  progressText: {
+    color: theme.colors.textSecondary,
+    fontSize: 11,
   },
   list: {
     gap: theme.spacing.sm,
-    paddingBottom: 140
+    paddingBottom: 140,
   },
   empty: {
     color: theme.colors.textSecondary,
     textAlign: "center",
-    marginTop: 24
+    marginTop: 24,
   },
   addBtn: {
     position: "absolute",
@@ -345,15 +450,15 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.primary,
     borderRadius: theme.borderRadius.md,
     padding: theme.spacing.md,
-    alignItems: "center"
+    alignItems: "center",
   },
   addBtnText: {
     color: theme.colors.text,
     fontWeight: "800",
-    fontSize: 16
+    fontSize: 16,
   },
   disabled: {
-    opacity: 0.5
+    opacity: 0.5,
   },
   banner: {
     backgroundColor: theme.colors.surfacePressed,
@@ -361,21 +466,37 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: theme.borderRadius.md,
     padding: theme.spacing.sm,
-    marginBottom: theme.spacing.sm
+    marginBottom: theme.spacing.sm,
   },
   bannerText: {
     color: theme.colors.text,
-    fontSize: 13
+    fontSize: 13,
+  },
+  bannerInfo: {
+    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.border,
+    borderWidth: 1,
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.sm,
+    marginBottom: theme.spacing.sm,
+  },
+  bannerInfoText: {
+    color: theme.colors.textSecondary,
+    fontSize: 12,
   },
   error: {
     color: theme.colors.danger,
-    marginBottom: theme.spacing.sm
+    marginBottom: theme.spacing.sm,
   },
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.55)",
     justifyContent: "center",
-    padding: theme.spacing.md
+    padding: theme.spacing.md,
+  },
+  modalScrollContent: {
+    flexGrow: 1,
+    justifyContent: "center",
   },
   modal: {
     backgroundColor: theme.colors.surface,
@@ -383,21 +504,27 @@ const styles = StyleSheet.create({
     padding: theme.spacing.md,
     gap: theme.spacing.sm,
     borderWidth: 1,
-    borderColor: theme.colors.border
+    borderColor: theme.colors.border,
   },
   modalTitle: {
     color: theme.colors.text,
     fontSize: 20,
-    fontWeight: "800"
+    fontWeight: "800",
   },
   modalMessage: {
     color: theme.colors.textSecondary,
-    fontSize: 14
+    fontSize: 14,
+  },
+  sectionLabel: {
+    color: theme.colors.textSecondary,
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 4,
   },
   helpText: {
     color: theme.colors.textSecondary,
     fontSize: 12,
-    lineHeight: 17
+    lineHeight: 17,
   },
   input: {
     borderWidth: 1,
@@ -406,53 +533,53 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     backgroundColor: theme.colors.background,
     paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm
+    paddingVertical: theme.spacing.sm,
   },
   brandWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: theme.spacing.xs
+    gap: theme.spacing.xs,
   },
   brandPill: {
     borderRadius: theme.borderRadius.round,
     borderWidth: 1,
     borderColor: theme.colors.border,
     paddingVertical: 6,
-    paddingHorizontal: 10
+    paddingHorizontal: 10,
   },
   brandPillSelected: {
-    backgroundColor: theme.colors.primary
+    backgroundColor: theme.colors.primary,
   },
   brandPillText: {
     color: theme.colors.text,
     fontSize: 11,
-    fontWeight: "700"
+    fontWeight: "700",
   },
   modalActions: {
     marginTop: theme.spacing.sm,
     flexDirection: "row",
     justifyContent: "flex-end",
-    gap: theme.spacing.sm
+    gap: theme.spacing.sm,
   },
   secondaryBtn: {
     borderRadius: theme.borderRadius.sm,
     borderWidth: 1,
     borderColor: theme.colors.border,
     paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm
+    paddingVertical: theme.spacing.sm,
   },
   secondaryBtnText: {
     color: theme.colors.textSecondary,
-    fontWeight: "700"
+    fontWeight: "700",
   },
   primaryBtn: {
     borderRadius: theme.borderRadius.sm,
     backgroundColor: theme.colors.primary,
     paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm
+    paddingVertical: theme.spacing.sm,
   },
   primaryBtnText: {
     color: theme.colors.text,
-    fontWeight: "800"
-  }
+    fontWeight: "800",
+  },
 });
