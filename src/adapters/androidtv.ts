@@ -94,6 +94,7 @@ export class AndroidTVAdapter implements TVAdapter {
       );
       this.readyGate?.resolve({
         ok: false,
+        needsCode: true,
         message: "Pairing code required from TV screen."
       });
     });
@@ -135,6 +136,7 @@ export class AndroidTVAdapter implements TVAdapter {
           if (this.waitingForCode) {
             resolve({
               ok: false,
+              needsCode: true,
               message: "Pairing code required."
             });
             return;

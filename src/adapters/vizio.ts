@@ -78,6 +78,7 @@ export class VizioAdapter implements TVAdapter {
 
     return {
       ok: false,
+      needsCode: true,
       message: "Pairing PIN required. Enter PIN shown on your Vizio TV."
     };
   }

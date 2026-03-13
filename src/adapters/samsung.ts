@@ -2,7 +2,7 @@ import type {
   AdapterConnectOptions,
   AdapterConnectResult,
   RemoteKey,
-  TVAdapter
+  TVAdapter,
 } from "./types";
 
 const KEY_MAP: Record<RemoteKey, string> = {
@@ -36,21 +36,17 @@ const KEY_MAP: Record<RemoteKey, string> = {
   num_6: "KEY_6",
   num_7: "KEY_7",
   num_8: "KEY_8",
-  num_9: "KEY_9"
+  num_9: "KEY_9",
 };
 
 const b64 = (s: string): string => {
-  if (typeof globalThis.btoa === "function") {
-    return globalThis.btoa(s);
-  }
+  if (typeof globalThis.btoa === "function") return globalThis.btoa(s);
   return s;
 };
 
 type SamsungMessage = {
   event?: string;
-  data?: {
-    token?: string;
-  };
+  data?: { token?: string };
 };
 
 export class SamsungAdapter implements TVAdapter {
@@ -58,31 +54,29 @@ export class SamsungAdapter implements TVAdapter {
   private ip = "";
   private token = "";
   private socket: WebSocket | null = null;
+  private onInfo?: (msg: string) => void;
 
   async connect(options: AdapterConnectOptions): Promise<AdapterConnectResult> {
     this.ip = options.ip;
     this.token = options.authToken ?? "";
+    this.onInfo = options.onInfo;
 
     const name = b64("R3mote");
     const secureUrl = this.buildUrl(8002, true, name, this.token);
     const insecureUrl = this.buildUrl(8001, false, name, this.token);
 
     const secureResult = await this.openSocket(secureUrl);
-    if (secureResult.ok) {
-      return secureResult;
-    }
+    if (secureResult.ok) return secureResult;
 
     const fallbackResult = await this.openSocket(insecureUrl);
-    if (fallbackResult.ok) {
-      return fallbackResult;
-    }
+    if (fallbackResult.ok) return fallbackResult;
 
     return {
       ok: false,
       message:
         secureResult.message ??
         fallbackResult.message ??
-        "Samsung TV connection failed."
+        "Samsung TV connection failed.",
     };
   }
 
@@ -95,18 +89,17 @@ export class SamsungAdapter implements TVAdapter {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       throw new Error("Samsung TV not connected.");
     }
-
-    const payload = {
-      method: "ms.remote.control",
-      params: {
-        Cmd: "Click",
-        DataOfCmd: KEY_MAP[key],
-        Option: "false",
-        TypeOfRemote: "SendRemoteKey"
-      }
-    };
-
-    this.socket.send(JSON.stringify(payload));
+    this.socket.send(
+      JSON.stringify({
+        method: "ms.remote.control",
+        params: {
+          Cmd: "Click",
+          DataOfCmd: KEY_MAP[key],
+          Option: "false",
+          TypeOfRemote: "SendRemoteKey",
+        },
+      })
+    );
   }
 
   async ping(): Promise<boolean> {
@@ -121,16 +114,15 @@ export class SamsungAdapter implements TVAdapter {
   ): string {
     const protocol = secure ? "wss" : "ws";
     const base = `${protocol}://${this.ip}:${port}/api/v2/channels/samsung.remote.control?name=${appName}`;
-    if (!token) {
-      return base;
-    }
-    return `${base}&token=${encodeURIComponent(token)}`;
+    return token ? `${base}&token=${encodeURIComponent(token)}` : base;
   }
 
   private async openSocket(url: string): Promise<AdapterConnectResult> {
     return await new Promise<AdapterConnectResult>((resolve) => {
       let settled = false;
       const socket = new WebSocket(url);
+
+      // 15s timeout gives user time to approve on TV
       const timeout = setTimeout(() => {
         if (!settled) {
           settled = true;
@@ -138,29 +130,27 @@ export class SamsungAdapter implements TVAdapter {
           resolve({
             ok: false,
             message:
-              "Timed out waiting for Samsung TV. Make sure TV is on and tap Allow on the TV prompt."
+              "Timed out waiting for Samsung TV. Make sure TV is on, then try again.",
           });
         }
-      }, 5000);
+      }, 15000);
 
       socket.onopen = () => {
         this.socket = socket;
+        this.onInfo?.(
+          "Connected to Samsung TV. If this is first time, look at your TV and press Allow."
+        );
       };
 
       socket.onmessage = (event) => {
         try {
           const msg = JSON.parse(String(event.data)) as SamsungMessage;
           const token = msg?.data?.token;
-          if (token) {
-            this.token = token;
-          }
+          if (token) this.token = token;
           if (!settled && msg?.event === "ms.channel.connect") {
             settled = true;
             clearTimeout(timeout);
-            resolve({
-              ok: true,
-              authToken: this.token || undefined
-            });
+            resolve({ ok: true, authToken: this.token || undefined });
           }
         } catch {
           if (!settled) {
@@ -178,7 +168,7 @@ export class SamsungAdapter implements TVAdapter {
           resolve({
             ok: false,
             message:
-              "Samsung connection failed. Ensure phone/TV are on same WiFi and approve the TV prompt."
+              "Samsung connection failed. Ensure phone and TV are on same WiFi.",
           });
         }
       };
@@ -190,7 +180,7 @@ export class SamsungAdapter implements TVAdapter {
           resolve({
             ok: false,
             message:
-              "Samsung socket closed before pairing completed. Re-open TV and try again."
+              "Samsung TV closed the connection. Re-open TV and try again.",
           });
         }
       };

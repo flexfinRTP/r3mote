@@ -2,7 +2,7 @@ import type {
   AdapterConnectOptions,
   AdapterConnectResult,
   RemoteKey,
-  TVAdapter
+  TVAdapter,
 } from "./types";
 
 type LgControl =
@@ -40,7 +40,7 @@ const KEY_MAP: Partial<Record<RemoteKey, LgControl>> = {
   num_6: { type: "pointer", button: "6" },
   num_7: { type: "pointer", button: "7" },
   num_8: { type: "pointer", button: "8" },
-  num_9: { type: "pointer", button: "9" }
+  num_9: { type: "pointer", button: "9" },
 };
 
 type LgMessage = {
@@ -59,15 +59,16 @@ export class LGAdapter implements TVAdapter {
   private socket: WebSocket | null = null;
   private pointerSocket: WebSocket | null = null;
   private reqId = 1;
+  private onInfo?: (msg: string) => void;
 
   async connect(options: AdapterConnectOptions): Promise<AdapterConnectResult> {
     this.ip = options.ip;
     this.clientKey = options.clientKey ?? "";
+    this.onInfo = options.onInfo;
 
     const res = await this.openMainSocket();
-    if (!res.ok) {
-      return res;
-    }
+    if (!res.ok) return res;
+
     try {
       await this.setupPointerSocket();
     } catch (err) {
@@ -76,7 +77,7 @@ export class LGAdapter implements TVAdapter {
         message:
           err instanceof Error
             ? err.message
-            : "LG pointer input setup failed. Re-open the app and accept TV prompt."
+            : "LG pointer input setup failed. Try reconnecting.",
       };
     }
     return { ok: true, clientKey: this.clientKey || undefined };
@@ -91,9 +92,7 @@ export class LGAdapter implements TVAdapter {
 
   async sendKey(key: RemoteKey): Promise<void> {
     const mapping = KEY_MAP[key];
-    if (!mapping) {
-      throw new Error(`LG key not mapped: ${key}`);
-    }
+    if (!mapping) throw new Error(`LG key not mapped: ${key}`);
 
     if (mapping.type === "uri") {
       this.sendRequest(mapping.uri, mapping.payload);
@@ -103,11 +102,9 @@ export class LGAdapter implements TVAdapter {
     if (!this.pointerSocket || this.pointerSocket.readyState !== WebSocket.OPEN) {
       await this.setupPointerSocket();
     }
-
     if (!this.pointerSocket || this.pointerSocket.readyState !== WebSocket.OPEN) {
       throw new Error("LG pointer socket not ready.");
     }
-
     this.pointerSocket.send(`type:button\nname:${mapping.button}\n\n`);
   }
 
@@ -119,65 +116,70 @@ export class LGAdapter implements TVAdapter {
     return await new Promise<AdapterConnectResult>((resolve) => {
       let settled = false;
       const socket = new WebSocket(`ws://${this.ip}:3000`);
+
+      // 15s timeout gives user time to accept on TV
       const timeout = setTimeout(() => {
-        if (settled) {
-          return;
-        }
+        if (settled) return;
         settled = true;
         socket.close();
-        resolve({ ok: false, message: "Timed out connecting to LG TV." });
-      }, 5000);
+        resolve({
+          ok: false,
+          message: "Timed out connecting to LG TV. Make sure TV is on, then try again.",
+        });
+      }, 15000);
 
       socket.onopen = () => {
         this.socket = socket;
-        const registerPayload = {
-          type: "register",
-          id: String(this.reqId++),
-          payload: {
-            "force-pairing": false,
-            "pairingType": "PROMPT",
-            "client-key": this.clientKey || undefined,
-            manifest: {
-              appVersion: "1.0.0",
-              signed: {
-                appId: "com.family.r3mote",
-                created: "2026-03-12",
-                localizedAppNames: {
-                  "": "R3mote"
-                },
-                localizedVendorNames: {
-                  "": "Family"
+
+        this.onInfo?.(
+          this.clientKey
+            ? "Reconnecting to LG TV..."
+            : "Connected to LG TV. If this is first time, look at your TV and press Accept."
+        );
+
+        socket.send(
+          JSON.stringify({
+            type: "register",
+            id: String(this.reqId++),
+            payload: {
+              "force-pairing": false,
+              pairingType: "PROMPT",
+              "client-key": this.clientKey || undefined,
+              manifest: {
+                appVersion: "1.0.0",
+                signed: {
+                  appId: "com.family.r3mote",
+                  created: "2026-03-12",
+                  localizedAppNames: { "": "R3mote" },
+                  localizedVendorNames: { "": "Family" },
+                  permissions: [
+                    "LAUNCH",
+                    "LAUNCH_WEBAPP",
+                    "APP_TO_APP",
+                    "CONTROL_AUDIO",
+                    "CONTROL_DISPLAY",
+                    "CONTROL_INPUT_TV",
+                    "CONTROL_POWER",
+                  ],
+                  serial: "r3mote",
                 },
                 permissions: [
-                  "LAUNCH",
-                  "LAUNCH_WEBAPP",
-                  "APP_TO_APP",
                   "CONTROL_AUDIO",
                   "CONTROL_DISPLAY",
                   "CONTROL_INPUT_TV",
-                  "CONTROL_POWER"
+                  "CONTROL_POWER",
                 ],
-                serial: "r3mote"
               },
-              permissions: [
-                "CONTROL_AUDIO",
-                "CONTROL_DISPLAY",
-                "CONTROL_INPUT_TV",
-                "CONTROL_POWER"
-              ]
-            }
-          }
-        };
-        socket.send(JSON.stringify(registerPayload));
+            },
+          })
+        );
       };
 
       socket.onmessage = (event) => {
         const msg = JSON.parse(String(event.data)) as LgMessage;
         if (msg.type === "registered") {
           const key = msg?.payload?.["client-key"];
-          if (key) {
-            this.clientKey = key;
-          }
+          if (key) this.clientKey = key;
           if (!settled) {
             settled = true;
             clearTimeout(timeout);
@@ -193,7 +195,7 @@ export class LGAdapter implements TVAdapter {
           resolve({
             ok: false,
             message:
-              "LG connection failed. Enable LG Connect Apps on TV and accept the connection prompt."
+              "LG connection failed. Enable LG Connect Apps on TV and ensure same WiFi.",
           });
         }
       };
@@ -204,7 +206,7 @@ export class LGAdapter implements TVAdapter {
           clearTimeout(timeout);
           resolve({
             ok: false,
-            message: "LG TV closed the connection before pairing completed."
+            message: "LG TV closed the connection before pairing completed.",
           });
         }
       };
@@ -216,14 +218,7 @@ export class LGAdapter implements TVAdapter {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       throw new Error("LG TV is not connected.");
     }
-    this.socket.send(
-      JSON.stringify({
-        type: "request",
-        id,
-        uri,
-        payload
-      })
-    );
+    this.socket.send(JSON.stringify({ type: "request", id, uri, payload }));
     return id;
   }
 
@@ -244,9 +239,7 @@ export class LGAdapter implements TVAdapter {
         let completed = false;
         try {
           const msg = JSON.parse(String(event.data)) as LgMessage;
-          if (msg.id !== requestId) {
-            return;
-          }
+          if (msg.id !== requestId) return;
           completed = true;
           const socketPath = msg?.payload?.socketPath;
           if (!socketPath) {

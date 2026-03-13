@@ -67,6 +67,8 @@ export interface AdapterConnectOptions {
 export interface AdapterConnectResult {
   ok: boolean;
   message?: string;
+  /** True when the TV is actively showing a PIN/code the user needs to enter */
+  needsCode?: boolean;
   authToken?: string;
   clientKey?: string;
   certificate?: {

@@ -100,11 +100,11 @@ const pairingPromptFor = (tv: SavedTV, message?: string): PairingPrompt => {
       };
     case "sony":
       return {
-        kind: "psk",
-        title: "Sony Pre-Shared Key",
+        kind: "pin",
+        title: "Sony TV PIN",
         message:
           message ??
-          "Set IP Control on Sony TV, then enter the exact Pre-Shared Key in manual connect."
+          "Enter the 4-digit PIN shown on your Sony TV screen.",
       };
     default:
       return {
@@ -120,7 +120,7 @@ const connectFailureFor = (tv: SavedTV, message?: string): string => {
   const raw = message ?? "";
 
   if (tv.brand === "sony") {
-    return `${prefix} Confirm TV IP Control is enabled and Pre-Shared Key is correct. ${raw}`.trim();
+    return `${prefix} Make sure TV is on with IP Control enabled in TV settings. ${raw}`.trim();
   }
   if (tv.brand === "samsung") {
     return `${prefix} Ensure both devices are on same WiFi and approve the TV prompt. ${raw}`.trim();
@@ -191,7 +191,7 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       name: input.name || `${input.brand.toUpperCase()} TV`,
       brand: input.brand,
       ip: input.brand === "ir" ? "ir-local" : input.ip,
-      psk: input.brand === "ir" ? input.irBrand : input.psk,
+      psk: input.brand === "ir" ? input.irBrand : (input.psk || undefined),
       irBrand: input.irBrand,
       favorite: false,
       lastSeen: now(),
@@ -223,7 +223,8 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             break;
           }
 
-          if (adapter.submitCode) {
+          // Show pairing modal only when TV is actively showing a code
+          if (adapter.submitCode && result.needsCode !== false) {
             const prompt = pairingPromptFor(tv, result.message);
             setPendingPairing({ tv, adapter, prompt });
             return null;

@@ -8,6 +8,82 @@
 - Fixed runtime crash on older JS engines where `Promise.allSettled` is undefined by replacing discovery aggregation with a compatibility-safe settle helper.
 - Fixed SSDP crash (`socket.send(): address and port parameters must be provided`) by restoring React Native UDP-compatible send signature with explicit offset/length/port/address.
 
+## [0.2.3] - 2026-03-13
+
+### Sony Bravia — Full Debug & Fix
+
+**Three bugs found and fixed:**
+
+1. **Sony returns HTTP 200 even on auth failures** — previous code checked only
+   `res.ok` (HTTP status), so `tryNoAuth()` returned success when the TV actually
+   rejected the request. New `verifyAuth()` parses the JSON body and checks for
+   `"result"` vs `"error"`.
+
+2. **`actRegister` missing `"level": "private"` param** — the proven `braviarc`
+   library (77 stars) includes this field and `Connection: keep-alive` header.
+   Without it, some Sony TVs ignore the registration request and never display
+   the PIN on screen. Both are now included.
+
+3. **Pairing modal shown even when PIN is not on screen** — when PIN pairing is
+   not supported (TV set to PSK-only auth), the adapter returned `{ ok: false }`
+   which triggered the pairing code modal. New `needsCode` flag in
+   `AdapterConnectResult` ensures the modal only appears when the TV is actively
+   showing a PIN/code.
+
+**Sony connection flow now:**
+1. Check reachability (is `/sony/system` responding at all?)
+2. Try saved auth cookie / saved PSK
+3. Try common default PSKs (0000, 1234)
+4. Try no-auth mode
+5. Try PIN pairing via `actRegister` (with `level: private` + `keep-alive`)
+6. If PIN not supported → show detailed TV setup instructions in status banner
+
+**PSK manual entry fallback added:**
+- Manual add modal now shows a Pre-Shared Key input when Sony is selected
+- User can enter their TV's PSK directly (bypasses auto-detection)
+- Help text guides user to the correct TV settings menu path
+
+**Stack overflow fix — discovery scanner rewritten:**
+- Root cause: 15 workers × 4 parallel HTTP probes = up to 60 concurrent native
+  bridge calls, which overflows the native stack
+- Fix: all probes now run **sequentially per IP** (one at a time), workers
+  reduced from 15 to 6, 5ms pause between IPs
+- SSDP and mDNS scanners removed from discovery pipeline entirely — they used
+  additional native sockets and the port scanner finds everything they would
+- Scan is slightly slower (~15-20s vs ~5s) but rock-solid stable
+
+**UX improvements:**
+- Scanned online TVs auto-connect on tap (no manual add modal needed)
+- Detailed progress messages during Sony connection ("Checking reachability...",
+  "Trying default keys...", "Requesting PIN...")
+- `needsCode` flag added to `AdapterConnectResult` — all adapters updated
+
+## [0.2.1] - 2026-03-13
+
+### Seamless Pairing — No Codes, No Keys
+
+**Sony adapter completely rewritten — PIN pairing instead of PSK:**
+- Removed Pre-Shared Key (PSK) requirement entirely
+- Sony now uses `actRegister` API: TV shows a 4-digit PIN on screen, user enters it in app
+- Tries no-auth first (for TVs set to "None" authentication)
+- Falls back to saved auth cookie on reconnection
+- Legacy PSK support kept internally for backward compatibility
+
+**Samsung/LG — auto-approval with 15-second window:**
+- Increased WebSocket timeout from 5s to 15s, giving user time to approve on TV
+- Added real-time status messages: "Look at your TV and press Allow/Accept"
+- After first approval, saved token/key makes reconnection instant
+
+**UI simplified:**
+- Removed PSK input field from Add TV modal entirely
+- Updated brand help text to be action-oriented ("tap Connect, then press Allow on TV")
+- Pairing prompt now shows contextual placeholder ("Enter PIN from TV" vs "Enter code from TV")
+
+**Port scanner stack overflow fixed:**
+- Reduced concurrency from 30 to 15 workers
+- TCP probes now run sequentially per-IP (not parallel) to avoid native bridge overload
+- Port scan runs first, then SSDP/mDNS run after (not simultaneously)
+
 ## [0.2.0] - 2026-03-13
 
 ### Major: Discovery Refactor + IR Blaster Support

@@ -7,6 +7,12 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "icon": "./assets/r3mote_logo.png",
+    "splash": {
+      "image": "./assets/r3mote_logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#121212"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.family.r3mote",
@@ -15,6 +21,10 @@
       }
     },
     "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/r3mote_logo.png",
+        "backgroundColor": "#121212"
+      },
       "package": "com.family.r3mote",
       "permissions": [
         "INTERNET",

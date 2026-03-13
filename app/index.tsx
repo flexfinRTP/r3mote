@@ -33,16 +33,13 @@ const wifiBrandOptions: TVBrand[] = [
 ];
 
 const manualBrandHelp: Record<TVBrand, string> = {
-  roku: "Roku: usually no setup. Just ensure phone and TV are on same WiFi.",
-  samsung:
-    "Samsung: on first connect, watch TV and press Allow when prompted.",
-  lg: "LG: enable LG Connect Apps in TV settings, then accept prompt.",
-  sony:
-    "Sony: set IP Control + Pre-Shared Key on TV first, then enter same key here.",
-  vizio: "Vizio: app will ask for on-screen TV PIN during pairing.",
-  androidtv: "Android TV: app will ask for 6-digit code shown on TV.",
-  firetv:
-    "Fire TV: enable ADB Debugging in Developer Options, then pair with on-screen prompt.",
+  roku: "Roku: just tap Connect. No setup needed.",
+  samsung: "Samsung: tap Connect, then press Allow on your TV when prompted.",
+  lg: "LG: tap Connect, then press Accept on your TV when prompted.",
+  sony: "Sony: tap Connect to auto-pair. If it fails, enter your TV's Pre-Shared Key below (default is usually 0000). Find it in TV Settings → Network → Home Network → IP Control.",
+  vizio: "Vizio: tap Connect. TV will show a PIN — enter it here.",
+  androidtv: "Android TV: tap Connect. TV will show a code — enter it here.",
+  firetv: "Fire TV: enable ADB Debugging in Settings > Developer Options, then tap Connect.",
   ir: "IR Blaster: uses your phone's built-in infrared. Point phone at TV. Android only.",
 };
 
@@ -68,8 +65,8 @@ export default function HomeScreen() {
   const [manualName, setManualName] = useState("");
   const [manualBrand, setManualBrand] = useState<TVBrand>("roku");
   const [manualIp, setManualIp] = useState("");
-  const [manualPsk, setManualPsk] = useState("");
   const [manualIrBrand, setManualIrBrand] = useState<IRBrandKey>("universal");
+  const [manualPsk, setManualPsk] = useState("");
   const [hasIR, setHasIR] = useState(false);
   const [pairingCode, setPairingCode] = useState("");
 
@@ -95,6 +92,8 @@ export default function HomeScreen() {
   };
 
   const onDevicePress = async (device: (typeof knownDevices)[number]) => {
+    if (connecting) return;
+
     const existing = tvs.find(
       (tv) => tv.brand === device.brand && tv.ip.trim() === device.ip.trim()
     );
@@ -105,10 +104,24 @@ export default function HomeScreen() {
       return;
     }
 
+    // Auto-connect for scanned online TVs — no modal needed
+    if (device.online && device.brand !== "ir") {
+      const connected = await addOrConnectManualTV({
+        name: device.name,
+        brand: device.brand,
+        ip: device.ip,
+      });
+      if (connected) {
+        handleConnectResult(connected.id);
+      }
+      // If connect failed and needs pairing, the pairing modal pops up automatically
+      return;
+    }
+
+    // Offline or IR — open manual add modal
     setManualName(device.name);
     setManualBrand(device.brand);
     setManualIp(device.ip);
-    setManualPsk("");
     setManualOpen(true);
   };
 
@@ -116,10 +129,6 @@ export default function HomeScreen() {
     if (connecting) return;
     if (manualBrand !== "ir" && !manualIp.trim()) {
       Alert.alert("Missing IP", "Please enter a valid TV IP address.");
-      return;
-    }
-    if (manualBrand === "sony" && !manualPsk.trim()) {
-      Alert.alert("Sony key needed", "Please enter the Sony Pre-Shared Key.");
       return;
     }
     const connected = await addOrConnectManualTV({
@@ -130,7 +139,7 @@ export default function HomeScreen() {
           : `${manualBrand.toUpperCase()} TV`),
       brand: manualBrand,
       ip: manualBrand === "ir" ? "ir-local" : manualIp.trim(),
-      psk: manualBrand === "sony" ? manualPsk.trim() : undefined,
+      psk: manualPsk.trim() || undefined,
       irBrand: manualBrand === "ir" ? manualIrBrand : undefined,
     });
     if (connected) {
@@ -232,8 +241,8 @@ export default function HomeScreen() {
           setManualName("");
           setManualBrand("roku");
           setManualIp("");
-          setManualPsk("");
           setManualIrBrand("universal");
+          setManualPsk("");
           setManualOpen(true);
         }}
       >
@@ -288,8 +297,10 @@ export default function HomeScreen() {
               {manualBrand === "sony" ? (
                 <TextInput
                   style={styles.input}
-                  placeholder="Sony Pre-Shared Key"
+                  placeholder='Pre-Shared Key (try "0000" if unsure)'
                   placeholderTextColor={theme.colors.textSecondary}
+                  autoCapitalize="none"
+                  keyboardType="number-pad"
                   value={manualPsk}
                   onChangeText={setManualPsk}
                 />
@@ -349,8 +360,10 @@ export default function HomeScreen() {
               style={styles.input}
               placeholder={
                 pairingPrompt?.kind === "pin"
-                  ? "Enter 4-digit PIN"
-                  : "Enter 6-digit code"
+                  ? "Enter PIN from TV"
+                  : pairingPrompt?.kind === "secret"
+                    ? "Enter code from TV"
+                    : "Enter code"
               }
               placeholderTextColor={theme.colors.textSecondary}
               value={pairingCode}
