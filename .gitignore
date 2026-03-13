@@ -11,6 +11,8 @@ build/
 android/
 ios/
 
+*.apk
+
 # logs
 *.log
 npm-debug.log*
