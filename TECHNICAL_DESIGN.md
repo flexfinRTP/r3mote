@@ -249,7 +249,7 @@ interface TVState {
 **Discovery:** SSDP (`ST: urn:schemas-sony-com:service:IRCC:1`) or manual IP entry
 
 **Key Implementation Details:**
-- Enable "Remote Start" and set a Pre-Shared Key on the TV: Settings → Network → Home Network → IP Control → Authentication → Normal and Pre-Shared Key
+- Enable "Remote Start" and set a Pre-Shared Key on the TV: Settings → Network & Internet → Home Network → IP Control → Authentication → Normal and Pre-Shared Key, then set Pre-Shared Key (e.g. "0000")
 - Send commands via POST to `http://{ip}/sony/IRCC` with SOAP/XML body containing the IRCC code
 - Alternative: REST API at `http://{ip}/sony/system` for some operations
 - PSK is sent as `X-Auth-PSK` header
@@ -726,8 +726,11 @@ const theme = {
 
 ### 6.2 Sony Bravia
 1. App discovers Sony via SSDP or user enters IP manually
-2. App prompts user: "On your Sony TV, go to Settings → Network → Home Network → IP Control → set Pre-Shared Key"
-3. User enters the PSK they set on the TV (e.g., "1234")
+2. User sets up TV: Settings → Network & Internet → Home Network → IP Control
+   - Authentication → "Normal and Pre-Shared Key"
+   - Pre-Shared Key → set to "0000"
+   - Enable Remote Start (in Network & Internet menu)
+3. User enters the PSK (e.g., "0000") in the app
 4. App sends a test command with `X-Auth-PSK` header to verify
 5. TV is saved with IP, PSK, and "sony" brand tag
 
@@ -994,7 +997,7 @@ For legacy (non-smart) TVs, the most practical solution is a **WiFi-connected IR
 | WiFi disconnected | Banner: "Connect to WiFi to use R3mote" |
 | TV IP changed (DHCP) | Re-run discovery on app open. Update saved IP silently. |
 | Vizio token expired | Prompt re-pairing with PIN |
-| Sony PSK wrong | Prompt to re-enter PSK |
+| Sony PSK wrong | Prompt to re-enter PSK. Verify TV is set to: Settings → Network & Internet → Home Network → IP Control → Authentication → "Normal and Pre-Shared Key", PSK → "0000" |
 | Samsung token invalid | Prompt user to re-allow on TV |
 | LG client key rejected | Prompt user to re-accept on TV |
 | Android TV cert rejected | Re-initiate pairing, show new PIN |
@@ -1143,12 +1146,12 @@ Nothing to do! Just make sure the Roku is connected to WiFi. Open R3mote, tap th
 4. Done! The app remembers the pairing.
 
 ### Sony Bravia
-1. On the TV remote, press **Home**
-2. Go to **Settings** → **Network** → **Home Network Setup** → **IP Control**
-3. Set **Authentication** to **Normal and Pre-Shared Key**
-4. Set a Pre-Shared Key (e.g., `1234`)
-5. Enable **Remote Start** to **On**
-6. In the R3mote app, enter the same key when prompted
+1. On the TV, go to **Settings** → **Network & Internet**
+2. Enable **Remote Start** (toggle on)
+3. Go to **Home Network** → **IP Control**
+4. Set **Authentication** to **Normal and Pre-Shared Key**
+5. Set **Pre-Shared Key** to `0000`
+6. In the R3mote app, enter `0000` as the Pre-Shared Key and tap Connect
 
 ### Vizio SmartCast
 1. Make sure the TV is on and connected to WiFi
@@ -1183,7 +1186,7 @@ Nothing to do! Just make sure the Roku is connected to WiFi. Open R3mote, tap th
 | Roku not responding | Restart the Roku. Check Settings → System → Advanced → Control by mobile apps → Enable. |
 | Samsung not found | Make sure the TV is on (not standby). Some models need: Settings → General → Network → Expert Settings → IP Remote → On. |
 | LG not responding | Enable LG Connect Apps: Settings → Network → LG Connect Apps → On. Restart TV. |
-| Sony commands not working | Verify the Pre-Shared Key is correct. Make sure IP Control is enabled on the TV. |
+| Sony commands not working | Verify the Pre-Shared Key is correct (default: 0000). Check TV Settings → Network & Internet → Home Network → IP Control → Authentication is set to "Normal and Pre-Shared Key" and Remote Start is enabled. |
 | Vizio pairing fails | Make sure you enter the PIN within 30 seconds. Try restarting the TV and pairing again. |
 | Android TV PIN not showing | Make sure the device is awake (not screensaver). Try restarting the device. |
 | Fire TV won't connect | Verify ADB Debugging is enabled. Try: Settings → My Fire TV → Developer Options → ADB Debugging → toggle OFF then ON. |

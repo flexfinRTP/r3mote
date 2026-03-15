@@ -8,6 +8,8 @@ export type TVBrand =
   | "firetv"
   | "ir";
 
+export type StreamingApp = "netflix" | "disney" | "prime";
+
 export type RemoteKey =
   | "power"
   | "volume_up"
@@ -69,6 +71,7 @@ export interface AdapterConnectResult {
   message?: string;
   /** True when the TV is actively showing a PIN/code the user needs to enter */
   needsCode?: boolean;
+  mac?: string;
   authToken?: string;
   clientKey?: string;
   certificate?: {
@@ -86,6 +89,8 @@ export interface TVAdapter {
   submitCode?(code: string): Promise<AdapterConnectResult>;
   disconnect(): Promise<void>;
   sendKey(key: RemoteKey): Promise<void>;
+  sendText?(text: string): Promise<void>;
+  launchApp?(app: StreamingApp): Promise<void>;
   ping(): Promise<boolean>;
   getState?(): Promise<TVState>;
 }

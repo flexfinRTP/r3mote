@@ -1,4 +1,3 @@
-import Zeroconf from "react-native-zeroconf";
 import type { DiscoveryDevice } from "./types";
 
 const SERVICES = [
@@ -7,6 +6,16 @@ const SERVICES = [
 ];
 
 export const scanMDNS = async (timeoutMs = 3000): Promise<DiscoveryDevice[]> => {
+  let Zeroconf: any;
+  try {
+    // Dynamic load keeps app boot safe when native module is unavailable.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const module = require("react-native-zeroconf");
+    Zeroconf = module.default ?? module;
+  } catch {
+    return [];
+  }
+
   const zeroconf = new Zeroconf();
   const devices = new Map<string, DiscoveryDevice>();
 

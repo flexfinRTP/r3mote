@@ -1,32 +1,32 @@
 export const theme = {
   colors: {
-    background: "#0D0D0D",
-    surface: "#1A1A2E",
-    surfacePressed: "#16213E",
-    primary: "#0F3460",
-    accent: "#E94560",
+    background: "#0B1A30",
+    surface: "#132844",
+    surfacePressed: "#1A3558",
+    primary: "#3B82F6",
+    accent: "#DC2626",
     text: "#FFFFFF",
-    textSecondary: "#A0A0A0",
-    success: "#00C853",
-    warning: "#F9A826",
-    danger: "#E94560",
-    border: "#2A2A3E"
+    textSecondary: "#7B9CC4",
+    success: "#22C55E",
+    warning: "#F59E0B",
+    danger: "#EF4444",
+    border: "#1E3A5F",
   },
   spacing: {
     xs: 4,
     sm: 8,
     md: 16,
     lg: 24,
-    xl: 32
+    xl: 32,
   },
   borderRadius: {
     sm: 8,
     md: 12,
     lg: 16,
-    round: 999
+    round: 999,
   },
   button: {
     minHeight: 56,
-    minWidth: 56
-  }
+    minWidth: 56,
+  },
 };

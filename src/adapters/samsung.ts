@@ -4,6 +4,7 @@ import type {
   RemoteKey,
   TVAdapter,
 } from "./types";
+import { encodeBase64 } from "@/utils/encoding";
 
 const KEY_MAP: Record<RemoteKey, string> = {
   power: "KEY_POWER",
@@ -39,11 +40,6 @@ const KEY_MAP: Record<RemoteKey, string> = {
   num_9: "KEY_9",
 };
 
-const b64 = (s: string): string => {
-  if (typeof globalThis.btoa === "function") return globalThis.btoa(s);
-  return s;
-};
-
 type SamsungMessage = {
   event?: string;
   data?: { token?: string };
@@ -61,7 +57,7 @@ export class SamsungAdapter implements TVAdapter {
     this.token = options.authToken ?? "";
     this.onInfo = options.onInfo;
 
-    const name = b64("R3mote");
+    const name = encodeBase64("R3mote");
     const secureUrl = this.buildUrl(8002, true, name, this.token);
     const insecureUrl = this.buildUrl(8001, false, name, this.token);
 

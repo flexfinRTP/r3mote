@@ -28,6 +28,8 @@ export interface AppSettings {
   darkMode: boolean;
   buttonSize: "normal" | "large";
   showNumberPad: boolean;
+  launchTarget: "home" | "last" | "favorite" | "startup_tv";
+  startupTvId?: string;
   lastTvId?: string;
 }
 

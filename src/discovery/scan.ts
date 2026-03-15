@@ -19,11 +19,11 @@ export const runDiscovery = async (
     }
   };
 
-  // Port scan only — SSDP/mDNS removed to prevent native bridge overload.
-  // The port scanner probes every IP on the subnet for known TV ports,
-  // which is more reliable than multicast discovery anyway.
+  // Port scan with parallel probes per IP for speed.
+  // 12 workers × 4 parallel HTTP probes = 48 max concurrent (safe for native bridge).
+  // 300ms timeout is plenty for LAN — connection-refused returns in <10ms.
   try {
-    await scanPorts(timeoutMs > 1000 ? 600 : 400, 6, {
+    await scanPorts(300, 12, {
       onFound: (device) => addDevice(device),
       onProgress: options?.onProgress,
     });

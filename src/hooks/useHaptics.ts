@@ -9,21 +9,33 @@ export const useHaptics = () => {
     if (!settings.hapticFeedback) {
       return;
     }
-    await Haptics.selectionAsync();
+    try {
+      await Haptics.selectionAsync();
+    } catch {
+      // Ignore haptics failures on unsupported devices/runtimes.
+    }
   }, [settings.hapticFeedback]);
 
   const success = useCallback(async () => {
     if (!settings.hapticFeedback) {
       return;
     }
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    try {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      // Ignore haptics failures on unsupported devices/runtimes.
+    }
   }, [settings.hapticFeedback]);
 
   const error = useCallback(async () => {
     if (!settings.hapticFeedback) {
       return;
     }
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    try {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } catch {
+      // Ignore haptics failures on unsupported devices/runtimes.
+    }
   }, [settings.hapticFeedback]);
 
   return {

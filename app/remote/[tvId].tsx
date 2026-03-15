@@ -2,14 +2,17 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   Pressable,
-  SafeAreaView,
-  ScrollView,
   StyleSheet,
   Text,
-  View
+  TextInput,
+  View,
 } from "react-native";
-import type { RemoteKey } from "@/adapters";
+import { SafeAreaView } from "react-native-safe-area-context";
+import type { RemoteKey, StreamingApp } from "@/adapters";
 import { RemoteLayout } from "@/components/RemoteLayout";
 import { useHaptics } from "@/hooks/useHaptics";
 import { useTV } from "@/hooks/useTV";
@@ -21,15 +24,20 @@ export default function RemoteScreen() {
   const {
     tvs,
     activeTv,
+    canSendText,
+    canLaunchApps,
     connectToSavedTV,
     sendKey,
-    settings,
+    sendText,
+    launchStreamingApp,
     disconnect,
     connecting,
-    statusMessage
+    statusMessage,
   } = useTV();
   const haptics = useHaptics();
   const [sending, setSending] = useState(false);
+  const [textOpen, setTextOpen] = useState(false);
+  const [textDraft, setTextDraft] = useState("");
 
   const tv = useMemo(
     () => tvs.find((item) => item.id === tvId) ?? activeTv ?? null,
@@ -64,7 +72,7 @@ export default function RemoteScreen() {
         err instanceof Error ? err.message : "Unable to send key.",
         [
           { text: "Close", style: "cancel" },
-          { text: "Reconnect TV", onPress: reconnect }
+          { text: "Reconnect TV", onPress: reconnect },
         ]
       );
     } finally {
@@ -72,52 +80,154 @@ export default function RemoteScreen() {
     }
   };
 
+  const handleSendText = async () => {
+    if (!textDraft.trim()) return;
+    if (sending) return;
+    setSending(true);
+    try {
+      await haptics.tap();
+      await sendText(textDraft.trim());
+      setTextOpen(false);
+      setTextDraft("");
+    } catch (err) {
+      await haptics.error();
+      Alert.alert(
+        "Text input failed",
+        err instanceof Error ? err.message : "Unable to send text."
+      );
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleLaunchApp = async (app: StreamingApp) => {
+    if (sending) return;
+    setSending(true);
+    try {
+      await haptics.tap();
+      await launchStreamingApp(app);
+    } catch (err) {
+      await haptics.error();
+      Alert.alert(
+        "App launch failed",
+        err instanceof Error ? err.message : "Unable to launch app."
+      );
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleSettings = () => {
+    if (!tv) return;
+    Alert.alert(
+      tv.name,
+      `${tv.brand.toUpperCase()} • ${tv.ip}${statusMessage ? `\n\n${statusMessage}` : ""}`,
+      [
+        { text: "Reconnect", onPress: reconnect },
+        {
+          text: "Disconnect",
+          style: "destructive",
+          onPress: async () => {
+            await disconnect();
+            router.replace("/");
+          },
+        },
+        { text: "Close", style: "cancel" },
+      ]
+    );
+  };
+
   if (!tv) {
     return (
-      <SafeAreaView style={styles.emptyWrap}>
-        <Text style={styles.emptyText}>TV not found.</Text>
-        <Pressable style={styles.backBtn} onPress={() => router.back()}>
-          <Text style={styles.backBtnText}>Back</Text>
-        </Pressable>
+      <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
+        <RemoteLayout
+          onKey={() => {}}
+          onSettings={() => router.replace("/")}
+          connected={false}
+        />
       </SafeAreaView>
     );
   }
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.connectionRow}>
-          <Text style={styles.connectionText}>
-            {tv.brand === "ir" ? "IR Blaster" : "Connected to"} {tv.name}
-            {tv.brand !== "ir" ? ` (${tv.brand.toUpperCase()})` : ""}
-          </Text>
-          <View style={styles.connectionActions}>
-            <Pressable
-              style={styles.disconnectBtn}
-              onPress={reconnect}
-              disabled={connecting}
-            >
-              <Text style={styles.disconnectText}>{connecting ? "..." : "Reconnect"}</Text>
-            </Pressable>
-            <Pressable
-              style={styles.disconnectBtn}
-              onPress={async () => {
-                await disconnect();
-                router.replace("/");
-              }}
-            >
-              <Text style={styles.disconnectText}>Disconnect</Text>
-            </Pressable>
-          </View>
-        </View>
-        {statusMessage ? <Text style={styles.statusText}>{statusMessage}</Text> : null}
+  const isConnected = activeTv?.id === tvId && !connecting;
 
-        <RemoteLayout
-          tvName={tv.name}
-          onKey={handleKey}
-          showNumberPad={settings.showNumberPad}
-        />
-      </ScrollView>
+  return (
+    <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
+      {(canSendText || canLaunchApps) && (
+        <View style={styles.quickBar}>
+          {canSendText ? (
+            <Pressable
+              style={({ pressed }) => [styles.quickBtn, pressed && styles.quickBtnPressed]}
+              onPress={() => setTextOpen(true)}
+            >
+              <Text style={styles.quickBtnText}>Keyboard</Text>
+            </Pressable>
+          ) : null}
+          {canLaunchApps ? (
+            <>
+              <Pressable
+                style={({ pressed }) => [styles.quickBtn, pressed && styles.quickBtnPressed]}
+                onPress={() => handleLaunchApp("netflix")}
+              >
+                <Text style={styles.quickBtnText}>Netflix</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.quickBtn, pressed && styles.quickBtnPressed]}
+                onPress={() => handleLaunchApp("disney")}
+              >
+                <Text style={styles.quickBtnText}>Disney+</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.quickBtn, pressed && styles.quickBtnPressed]}
+                onPress={() => handleLaunchApp("prime")}
+              >
+                <Text style={styles.quickBtnText}>Prime</Text>
+              </Pressable>
+            </>
+          ) : null}
+        </View>
+      )}
+      <RemoteLayout
+        onKey={handleKey}
+        onSettings={handleSettings}
+        connected={isConnected}
+      />
+
+      <Modal
+        visible={textOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setTextOpen(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <View style={styles.modal}>
+            <Text style={styles.modalTitle}>Type on phone</Text>
+            <Text style={styles.modalCopy}>
+              Sends text to the active TV search/login field.
+            </Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Search text..."
+              placeholderTextColor={theme.colors.textSecondary}
+              value={textDraft}
+              onChangeText={setTextDraft}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <View style={styles.modalActions}>
+              <Pressable style={styles.cancelBtn} onPress={() => setTextOpen(false)}>
+                <Text style={styles.cancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={styles.sendBtn} onPress={handleSendText}>
+                <Text style={styles.sendText}>{sending ? "Sending..." : "Send"}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -125,63 +235,87 @@ export default function RemoteScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background
+    backgroundColor: theme.colors.background,
   },
-  content: {
-    padding: theme.spacing.md,
-    gap: theme.spacing.md
-  },
-  connectionRow: {
+  quickBar: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: theme.spacing.sm
+    flexWrap: "wrap",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingTop: 4,
   },
-  connectionText: {
-    color: theme.colors.textSecondary,
-    fontSize: 12,
-    flexShrink: 1,
-    marginRight: theme.spacing.sm
-  },
-  disconnectBtn: {
+  quickBtn: {
+    backgroundColor: theme.colors.surface,
     borderWidth: 1,
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.sm,
-    paddingHorizontal: theme.spacing.sm,
-    paddingVertical: 6
+    paddingHorizontal: 10,
+    paddingVertical: 6,
   },
-  connectionActions: {
-    flexDirection: "row",
-    gap: theme.spacing.xs
+  quickBtnPressed: {
+    backgroundColor: theme.colors.surfacePressed,
   },
-  disconnectText: {
+  quickBtnText: {
     color: theme.colors.textSecondary,
-    fontSize: 12,
-    fontWeight: "700"
+    fontWeight: "700",
+    fontSize: 11,
   },
-  statusText: {
-    color: theme.colors.textSecondary,
-    fontSize: 12,
-    marginBottom: theme.spacing.xs
-  },
-  emptyWrap: {
+  modalBackdrop: {
     flex: 1,
-    backgroundColor: theme.colors.background,
-    alignItems: "center",
     justifyContent: "center",
-    gap: theme.spacing.md
+    backgroundColor: "rgba(0,0,0,0.5)",
+    padding: theme.spacing.md,
   },
-  emptyText: {
-    color: theme.colors.textSecondary
+  modal: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: theme.spacing.md,
+    gap: theme.spacing.sm,
   },
-  backBtn: {
+  modalTitle: {
+    color: theme.colors.text,
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  modalCopy: {
+    color: theme.colors.textSecondary,
+    fontSize: 12,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    color: theme.colors.text,
+    backgroundColor: theme.colors.background,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing.sm,
+  },
+  cancelBtn: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.sm,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+  },
+  cancelText: {
+    color: theme.colors.textSecondary,
+    fontWeight: "700",
+  },
+  sendBtn: {
     backgroundColor: theme.colors.primary,
     borderRadius: theme.borderRadius.sm,
     paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm
+    paddingVertical: theme.spacing.sm,
   },
-  backBtnText: {
+  sendText: {
     color: theme.colors.text,
-    fontWeight: "700"
-  }
+    fontWeight: "800",
+  },
 });

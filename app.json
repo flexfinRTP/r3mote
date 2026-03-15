@@ -17,7 +17,14 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.family.r3mote",
       "infoPlist": {
-        "NSLocalNetworkUsageDescription": "R3mote discovers and controls TVs on your home network."
+        "NSLocalNetworkUsageDescription": "R3mote discovers and controls TVs on your home network.",
+        "NSBonjourServices": [
+          "_androidtvremote2._tcp",
+          "_adb._tcp"
+        ],
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
       }
     },
     "android": {
@@ -38,7 +45,8 @@
     "plugins": [
       "expo-router",
       "expo-dev-client",
-      "expo-asset"
+      "expo-asset",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true

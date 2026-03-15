@@ -1,4 +1,5 @@
 import { withTimeout } from "@/utils/network";
+import { encodeBase64 } from "@/utils/encoding";
 import type {
   AdapterConnectOptions,
   AdapterConnectResult,
@@ -48,15 +49,10 @@ const xmlForCode = (code: string) =>
   </s:Body>
 </s:Envelope>`;
 
-const b64 = (s: string): string => {
-  if (typeof globalThis.btoa === "function") return globalThis.btoa(s);
-  return s;
-};
-
 const CLIENT_ID = "R3mote:r3mote-app-001";
 const NICKNAME = "R3mote";
 
-const DEFAULT_PSKS = ["0000", "1234", "0000", ""];
+const DEFAULT_PSKS = ["0000", "1234", ""];
 
 /**
  * Sony returns HTTP 200 even on auth failures — the real status is in the
@@ -146,12 +142,12 @@ export class SonyAdapter implements TVAdapter {
         needsCode: false,
         message:
           "Sony TV does not support PIN pairing with current settings.\n\n" +
-          "Please try ONE of these on your TV:\n\n" +
-          "Option A — Set a Pre-Shared Key:\n" +
-          '  Settings → Network → Home Network → IP Control → Pre-Shared Key → set to "0000"\n\n' +
-          "Option B — Enable PIN pairing:\n" +
-          '  Settings → Network → Home Network → IP Control → Authentication → set to "Normal and Pre-Shared Key"\n\n' +
-          "Then tap Connect again.",
+          "Set up your Sony TV manually:\n" +
+          "1. Settings → Network & Internet → Home Network → IP Control\n" +
+          '2. Authentication → "Normal and Pre-Shared Key"\n' +
+          '3. Pre-Shared Key → set to "0000"\n' +
+          "4. Enable Remote Start (in Network & Internet menu)\n\n" +
+          'Then enter 0000 as the Pre-Shared Key and tap Connect again.',
       };
     }
 
@@ -160,11 +156,12 @@ export class SonyAdapter implements TVAdapter {
       needsCode: false,
       message:
         "Could not connect to Sony TV.\n\n" +
-        "Make sure TV is ON, then check:\n" +
-        "  Settings → Network → Home Network → IP Control\n" +
-        '  → Authentication → "Normal and Pre-Shared Key"\n' +
-        '  → Pre-Shared Key → set to "0000"\n\n' +
-        "Then tap Connect again.",
+        "Make sure TV is ON, then set up:\n" +
+        "1. Settings → Network & Internet → Home Network → IP Control\n" +
+        '2. Authentication → "Normal and Pre-Shared Key"\n' +
+        '3. Pre-Shared Key → set to "0000"\n' +
+        "4. Enable Remote Start (in Network & Internet menu)\n\n" +
+        'Then enter 0000 as the Pre-Shared Key and tap Connect again.',
     };
   }
 
@@ -174,7 +171,7 @@ export class SonyAdapter implements TVAdapter {
     }
 
     try {
-      const authValue = b64(`:${pin}`);
+      const authValue = encodeBase64(`:${pin}`);
       const authHeader = `Basic ${authValue}`;
 
       const res = await withTimeout(
@@ -244,7 +241,7 @@ export class SonyAdapter implements TVAdapter {
         ok: false,
         message:
           "PIN accepted but commands still fail. " +
-          'Try setting your TV to Pre-Shared Key mode with key "0000" instead.',
+          'Try setting a Pre-Shared Key on your TV: Settings → Network & Internet → Home Network → IP Control → Pre-Shared Key → set to "0000".',
       };
     } catch {
       return {

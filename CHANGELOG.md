@@ -2,11 +2,137 @@
 
 ## [Unreleased]
 
+### Added — Lean Standout Features (No Heavy Native Bloat)
+- **Favorites + startup launch flow**
+  - Added favorite toggles for saved TVs and pinned favorites to top of lists.
+  - Added launch behavior setting: Home / Last TV / Favorite / Startup TV.
+  - Added per-TV "Startup" marker so app can open directly to that remote on launch.
+- **Smart reconnect + wake flow**
+  - Added Wake-on-LAN utility via UDP magic packet (when MAC is available).
+  - Added saved-TV MAC editor in Settings for wake support.
+  - Added smart recovery path on failed saved-TV connect:
+    - optional wake packet
+    - fast brand-matched subnet rescan
+    - auto IP update + reconnect when TV moved to a new DHCP address
+- **Keyboard + one-tap streaming apps (supported brands only)**
+  - Added remote quick actions strip with:
+    - Keyboard text send
+    - Netflix / Disney+ / Prime launch buttons
+  - Implemented reliable support in Roku adapter:
+    - text entry via `Lit_` keypresses
+    - app launch via Roku channel IDs
+- **Hidden advanced fix assistant**
+  - Added `Advanced Help & Diagnostics` screen from Settings (kept out of the main UI path).
+  - Includes one-tap Reconnect / Smart Recover / Wake actions per saved TV.
+  - Includes brand-specific troubleshooting checklists (Roku, Samsung, LG, Sony, Vizio, Android TV, Fire TV, IR).
+
+### Deferred Intentionally (to preserve speed/simplicity)
+- Home screen widgets, app-icon quick actions, and lock-screen controls were not added in this pass to avoid extra native complexity and startup overhead.
+
 ### Fixed
 - Resolved local startup failure (`The required package \`expo-asset\` cannot be found`) by adding `expo-asset` as an SDK-compatible app dependency.
 - Resolved Metro bundling failure (`Unable to resolve "core-js/modules/es.promise.js"`) by adding `core-js` dependency required by `react-native-androidtv-remote`.
 - Fixed runtime crash on older JS engines where `Promise.allSettled` is undefined by replacing discovery aggregation with a compatibility-safe settle helper.
 - Fixed SSDP crash (`socket.send(): address and port parameters must be provided`) by restoring React Native UDP-compatible send signature with explicit offset/length/port/address.
+
+### Fixed — Build & Visual Overhaul
+- Added `expo-font` dependency (required by `@expo/vector-icons`)
+- Added `expo-navigation-bar` for translucent Android system nav bar
+- Prevented runtime crashes on older dev clients that do not include `ExpoFontLoader` / `ExpoNavigationBar`:
+  - Added `AppIcon` wrapper with safe fallback glyphs when vector icon native module is unavailable
+  - Switched `expo-navigation-bar` usage to optional guarded runtime loading
+  - This keeps routes exporting correctly instead of failing with "missing default export" after module init errors
+
+### Hardened — Android + iOS Compatibility
+- **Runtime-safe native module loading**
+  - Android TV remote module is now lazy-loaded with graceful fallback messaging instead of crashing app startup on unsupported/missing native runtimes.
+  - Wake-on-LAN UDP and SSDP UDP modules are now lazy-loaded so missing native UDP does not break boot.
+  - mDNS scanner now safely returns no results when native Zeroconf is unavailable instead of throwing.
+  - Navigation bar styling now awaits async calls inside guarded try/catch, preventing unhandled `ExpoNavigationBar` promise rejections on runtimes without that native module.
+- **Stronger auth compatibility**
+  - Added a robust cross-runtime Base64 encoder utility and switched Samsung + Sony pairing/auth to use it.
+  - Fixes environments where `btoa` is unavailable and auth payloads were malformed.
+- **Safer haptics behavior**
+  - Haptic calls now fail-soft on devices/runtimes without full haptics support so remote commands still execute.
+- **Safe area + modal UX parity**
+  - Added `SafeAreaProvider` at root and moved app screens to `react-native-safe-area-context` safe-area views.
+  - Added `KeyboardAvoidingView` and Android `onRequestClose` handlers to text-entry modals for better keyboard/back-button behavior on both platforms.
+  - Added explicit pairing-cancel flow so Android hardware back can dismiss pairing modal safely.
+  - Home floating Add button and list bottom spacing now account for dynamic bottom insets.
+- **iOS local-network best-practice config**
+  - Added `NSAppTransportSecurity.NSAllowsLocalNetworking` for LAN HTTP control APIs.
+  - Added `NSBonjourServices` entries for Android TV / ADB mDNS service types.
+- **Storage compatibility hardening**
+  - Added sanitization for persisted TVs/settings so malformed or legacy AsyncStorage entries cannot crash app startup.
+  - Added launch-target validation and safe fallbacks to default settings.
+
+### Redesigned — Deep Blue Theme + Full-Screen Remote
+- **Background**: near-black → deep navy blue (`#0B1A30`) matching reference remote app
+- **Surfaces**: navy buttons (`#132844`) with navy borders (`#1E3A5F`)
+- **Active toggle**: bright blue (`#3B82F6`) — high contrast against navy
+- **Secondary text**: muted blue-gray (`#7B9CC4`) — readable against navy
+- **Amber arrows**: `#F59E0B` — pops on navy
+- **Connection dot**: green (`#22C55E`) when connected, red (`#EF4444`) when disconnected
+- **All colors** tuned for WCAG contrast accessibility against the deep blue background
+
+### Redesigned — Remote Screen Header → Settings Gear + Status Dot
+- Removed text-heavy header bar (TV name, Reconnect, status)
+- Replaced with minimal top row: `⚙ gear` + `● status dot` on left, `⏻ power` on right
+- Settings gear opens native action sheet with TV name/brand/IP, Reconnect, Disconnect
+- Status dot: green = connected, red = disconnected — instant visual feedback
+- Stack navigator header hidden for remote screen (`headerShown: false`)
+- Remote now uses full screen — maximum space for controls
+
+### Added — Translucent System Navigation Bar
+- Android system nav bar set to 60% opacity deep navy — content extends behind it
+- Light button style for visibility against dark translucent background
+- iOS status bar set to translucent
+
+### Upgraded — Professional Vector Icons
+- Replaced all Unicode/emoji symbols with `MaterialCommunityIcons` from `@expo/vector-icons`
+- D-Pad: `chevron-up/down/left/right` (clean thin chevrons matching reference remote app)
+- OK button: `circle-small` icon (subtle center dot)
+- Power: `power` icon (proper standby symbol)
+- Navigation: `arrow-left` (back), `home-outline` (home)
+- Media: `rewind`, `play-pause`, `fast-forward` icons
+- Controls: `menu` (hamburger), `volume-off` (mute)
+- CH/VOL arrows: `chevron-up/down` (matching D-Pad style)
+- Consistent amber color for all directional arrows, white for action icons
+
+### Fixed — Network Scan Speed (30s → ~5-8s)
+- **Root cause**: 7 probes ran sequentially per IP with 600ms timeouts across 6 workers
+  - Dead IPs: 7 × 600ms = 4.2s each. With 50 dead IPs: 50/6 × 4.2s = ~35 seconds
+- **Fix**: HTTP probes now run in **parallel** per IP (all 4 simultaneously)
+  - Dead IP now costs max(300ms) instead of 4 × 600ms — **~8x faster per IP**
+- TCP probes (Android TV, Vizio, Fire TV) also run in parallel, only if no HTTP hit
+- Reduced timeout from 600ms → 300ms (connection-refused returns in <10ms on LAN)
+- Increased workers from 6 → 12 (12 × 4 parallel = 48 concurrent, safely under 60 native bridge limit)
+- Removed inter-IP delay (unnecessary with proper concurrency)
+- Expected scan time: ~5-8 seconds typical, ~12s worst case (was 30s+)
+
+### Redesigned — Remote Control UI
+- Complete remote screen redesign matching reference remote app layout
+- **Circular D-Pad**: large circular touch area with amber directional arrows, subtle cross dividers, centered OK button
+- **Number pad toggle**: "1 2 3" and "D-Pad" buttons in nav row swap the center area between D-Pad and a 3x4 number grid — no scrolling needed
+- **Nav row**: ← (Back) | 1 2 3 (toggle) | D-Pad (toggle) | 🏠 (Home) — all in one compact row
+- **CH/VOL side columns**: Channel up/down on left, Volume up/down on right, with amber arrows matching D-Pad style
+- **Bottom center controls**: INPUT, GUIDE, MENU, MUTE in 2x2 grid + media controls (rewind, play/pause, forward) in a row below
+- **Circular power button**: red accent, top-right corner
+- **No scrolling**: entire remote fits on one screen using flex layout
+- **Compact header**: thin top bar with ← TV name | status | Reconnect — maximum space for controls
+- Removed ScrollView from remote screen
+- All existing buttons/features preserved (power, d-pad, back, home, menu, guide, input, media, volume, channel, mute, number pad)
+
+### Improved — Sony Bravia Setup Instructions
+- Updated all Sony Bravia setup instructions to match verified working TV menu path:
+  1. Settings → Network & Internet → Home Network → IP Control
+  2. Authentication → "Normal and Pre-Shared Key"
+  3. Pre-Shared Key → set to "0000"
+  4. Enable Remote Start (in Network & Internet menu)
+- Updated in-app help text (Add TV modal) with step-by-step Sony setup guide
+- Updated Sony adapter error/fallback messages with correct menu paths
+- Updated TVContext Sony failure message with specific settings path
+- Updated TECHNICAL_DESIGN.md: Sony implementation details, pairing flow (§6.2), family setup guide (Appendix A), troubleshooting table (Appendix B), and error handling table (§12)
 
 ## [0.2.3] - 2026-03-13
 

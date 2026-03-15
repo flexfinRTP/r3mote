@@ -2,7 +2,20 @@ import { makeId } from "@/utils/id";
 import type { TVBrand } from "@/adapters";
 import type { DiscoveryDevice } from "./types";
 
-const dgram = require("react-native-udp");
+let cachedUdpModule: any | null | undefined;
+
+const getUdpModule = (): any | null => {
+  if (cachedUdpModule !== undefined) {
+    return cachedUdpModule;
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    cachedUdpModule = require("react-native-udp");
+  } catch {
+    cachedUdpModule = null;
+  }
+  return cachedUdpModule;
+};
 
 const SSDP_ADDRESS = "239.255.255.250";
 const SSDP_PORT = 1900;
@@ -92,6 +105,9 @@ const extractIp = (location: string): string | null => {
 };
 
 export const scanSSDP = async (timeoutMs = 3000): Promise<DiscoveryDevice[]> => {
+  const dgram = getUdpModule();
+  if (!dgram) return [];
+
   return await new Promise<DiscoveryDevice[]>((resolve) => {
     const socket = dgram.createSocket({ type: "udp4", reusePort: true });
     const devices = new Map<string, DiscoveryDevice>();

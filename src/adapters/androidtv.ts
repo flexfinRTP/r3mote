@@ -5,10 +5,21 @@ import type {
   TVAdapter
 } from "./types";
 
-const AndroidTVRemoteLib = require("react-native-androidtv-remote");
+let cachedAndroidTVLib: any | null | undefined;
 
-const RemoteDirection =
-  AndroidTVRemoteLib.RemoteDirection ?? ({ SHORT: "SHORT" } as const);
+const getAndroidTVLib = (): any | null => {
+  if (cachedAndroidTVLib !== undefined) {
+    return cachedAndroidTVLib;
+  }
+  try {
+    // Dynamically load to avoid crashing iOS or outdated dev clients at startup.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    cachedAndroidTVLib = require("react-native-androidtv-remote");
+  } catch {
+    cachedAndroidTVLib = null;
+  }
+  return cachedAndroidTVLib;
+};
 
 const KEY_MAP: Record<RemoteKey, number> = {
   power: 26,
@@ -67,13 +78,28 @@ export class AndroidTVAdapter implements TVAdapter {
   private cert: AdapterConnectResult["certificate"];
   private waitingForCode = false;
   private readyGate: Deferred<AdapterConnectResult> | null = null;
+  private shortDirection: string = "SHORT";
 
   async connect(options: AdapterConnectOptions): Promise<AdapterConnectResult> {
     this.ip = options.ip;
     this.waitingForCode = false;
     this.readyGate = deferred<AdapterConnectResult>();
 
-    const AndroidRemote = AndroidTVRemoteLib.default ?? AndroidTVRemoteLib;
+    const androidTVLib = getAndroidTVLib();
+    if (!androidTVLib) {
+      return {
+        ok: false,
+        needsCode: false,
+        message:
+          "Android TV module unavailable in this build. Rebuild the app/dev client with native modules enabled."
+      };
+    }
+
+    const RemoteDirection =
+      androidTVLib.RemoteDirection ?? ({ SHORT: "SHORT" } as const);
+    this.shortDirection = String(RemoteDirection.SHORT ?? "SHORT");
+
+    const AndroidRemote = androidTVLib.default ?? androidTVLib;
     this.remote = new AndroidRemote(this.ip, {
       pairing_port: 6467,
       remote_port: 6466,
@@ -190,7 +216,7 @@ export class AndroidTVAdapter implements TVAdapter {
       throw new Error("Android TV is not connected.");
     }
     const keyCode = KEY_MAP[key];
-    this.remote.sendKey(keyCode, RemoteDirection.SHORT ?? "SHORT");
+    this.remote.sendKey(keyCode, this.shortDirection);
   }
 
   async ping(): Promise<boolean> {

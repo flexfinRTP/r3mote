@@ -3,6 +3,7 @@ import type {
   AdapterConnectOptions,
   AdapterConnectResult,
   RemoteKey,
+  StreamingApp,
   TVAdapter
 } from "./types";
 
@@ -44,13 +45,26 @@ export class RokuAdapter implements TVAdapter {
   brand = "roku" as const;
   private ip = "";
 
+  private static readonly APP_IDS: Record<StreamingApp, string> = {
+    netflix: "12",
+    disney: "291097",
+    prime: "13"
+  };
+
   async connect(options: AdapterConnectOptions): Promise<AdapterConnectResult> {
     this.ip = options.ip;
-    const ok = await this.ping();
-    if (!ok) {
+    const infoRes = await withTimeout(
+      fetch(`http://${this.ip}:8060/query/device-info`),
+      3000
+    ).catch(() => null);
+    if (!infoRes?.ok) {
       return { ok: false, message: "Roku did not respond on port 8060." };
     }
-    return { ok: true };
+    const info = await infoRes.text().catch(() => "");
+    const macMatch = info.match(
+      /<(?:wifi-mac|network-mac|ethernet-mac)>([^<]+)<\/(?:wifi-mac|network-mac|ethernet-mac)>/i
+    );
+    return { ok: true, mac: macMatch?.[1] };
   }
 
   async disconnect(): Promise<void> {
@@ -62,12 +76,36 @@ export class RokuAdapter implements TVAdapter {
       throw new Error("Roku not connected.");
     }
     const mapped = KEY_MAP[key];
-    const res = await withTimeout(
-      fetch(`http://${this.ip}:8060/keypress/${mapped}`, { method: "POST" }),
-      3000
-    );
+    const res = await this.postToRoku(`/keypress/${mapped}`);
     if (!res.ok) {
       throw new Error("Roku rejected the command.");
+    }
+  }
+
+  async sendText(text: string): Promise<void> {
+    if (!this.ip) {
+      throw new Error("Roku not connected.");
+    }
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    for (const char of trimmed) {
+      const encoded = encodeURIComponent(char);
+      const res = await this.postToRoku(`/keypress/Lit_${encoded}`);
+      if (!res.ok) {
+        throw new Error("Roku text entry failed.");
+      }
+    }
+  }
+
+  async launchApp(app: StreamingApp): Promise<void> {
+    if (!this.ip) {
+      throw new Error("Roku not connected.");
+    }
+    const appId = RokuAdapter.APP_IDS[app];
+    const res = await this.postToRoku(`/launch/${appId}`);
+    if (!res.ok) {
+      throw new Error(`${app} launch failed on Roku.`);
     }
   }
 
@@ -84,5 +122,12 @@ export class RokuAdapter implements TVAdapter {
     } catch {
       return false;
     }
+  }
+
+  private async postToRoku(path: string): Promise<Response> {
+    return await withTimeout(
+      fetch(`http://${this.ip}:8060${path}`, { method: "POST" }),
+      3000
+    );
   }
 }

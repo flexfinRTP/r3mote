@@ -1,10 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { createAdapter } from "@/adapters";
-import type { RemoteKey, TVAdapter, TVBrand } from "@/adapters";
+import type { RemoteKey, StreamingApp, TVAdapter, TVBrand } from "@/adapters";
 import { defaultSettings, loadSettings, loadTVs, saveSettings, saveTVs } from "@/storage/tvStore";
 import type { AppSettings, ManualAddInput, PairingPrompt, SavedTV } from "@/types/app";
+import { scanPorts } from "@/discovery/portscan";
 import { makeId } from "@/utils/id";
 import { errorMessage, sleep } from "@/utils/network";
+import { normalizeMacAddress, sendWakeOnLan } from "@/utils/wol";
 
 type PendingPairing = {
   tv: SavedTV;
@@ -17,18 +19,28 @@ type TVContextValue = {
   tvs: SavedTV[];
   settings: AppSettings;
   activeTv: SavedTV | null;
+  canSendText: boolean;
+  canLaunchApps: boolean;
   connecting: boolean;
   statusMessage: string | null;
   pairingPrompt: PairingPrompt | null;
   bootstrapScanRequested: boolean;
   consumeBootstrapScanRequest: () => void;
+  cancelPairing: () => void;
   clearStatus: () => void;
   addOrConnectManualTV: (input: ManualAddInput) => Promise<SavedTV | null>;
   connectToSavedTV: (tvId: string) => Promise<SavedTV | null>;
   submitPairingCode: (code: string) => Promise<SavedTV | null>;
   disconnect: () => Promise<void>;
   sendKey: (key: RemoteKey) => Promise<void>;
+  sendText: (text: string) => Promise<void>;
+  launchStreamingApp: (app: StreamingApp) => Promise<void>;
+  wakeTV: (tvId: string) => Promise<boolean>;
+  recoverSavedTV: (tvId: string) => Promise<SavedTV | null>;
   renameTV: (tvId: string, name: string) => Promise<void>;
+  toggleFavoriteTV: (tvId: string) => Promise<void>;
+  setStartupTV: (tvId: string | null) => Promise<void>;
+  setTVMac: (tvId: string, mac: string) => Promise<void>;
   forgetTV: (tvId: string) => Promise<void>;
   updateSettings: (partial: Partial<AppSettings>) => Promise<void>;
 };
@@ -43,6 +55,25 @@ const upsertTV = (prev: SavedTV[], next: SavedTV): SavedTV[] => {
   const copy = [...prev];
   copy[idx] = next;
   return copy;
+};
+
+const scoreRecoveryCandidate = (target: SavedTV, candidate: { name: string; model?: string }): number => {
+  const targetName = target.name.trim().toLowerCase();
+  const targetModel = (target.model ?? "").trim().toLowerCase();
+  const candidateName = candidate.name.trim().toLowerCase();
+  const candidateModel = (candidate.model ?? "").trim().toLowerCase();
+
+  let score = 0;
+  if (targetName && candidateName && (candidateName.includes(targetName) || targetName.includes(candidateName))) {
+    score += 3;
+  }
+  if (targetModel && candidateModel && (candidateModel.includes(targetModel) || targetModel.includes(candidateModel))) {
+    score += 4;
+  }
+  if (targetModel && candidateName && candidateName.includes(targetModel)) {
+    score += 2;
+  }
+  return score;
 };
 
 const BRAND_LABEL: Record<TVBrand, string> = {
@@ -120,7 +151,7 @@ const connectFailureFor = (tv: SavedTV, message?: string): string => {
   const raw = message ?? "";
 
   if (tv.brand === "sony") {
-    return `${prefix} Make sure TV is on with IP Control enabled in TV settings. ${raw}`.trim();
+    return `${prefix} Make sure TV is on. Set up: Settings → Network & Internet → Home Network → IP Control → Authentication → Normal and Pre-Shared Key, then set Pre-Shared Key to 0000. ${raw}`.trim();
   }
   if (tv.brand === "samsung") {
     return `${prefix} Ensure both devices are on same WiFi and approve the TV prompt. ${raw}`.trim();
@@ -184,6 +215,11 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   }, []);
 
   const clearStatus = useCallback(() => setStatusMessage(null), []);
+  const cancelPairing = useCallback(() => {
+    setPendingPairing(null);
+    setStatusMessage("Pairing canceled.");
+    setConnecting(false);
+  }, []);
 
   const buildSavedTV = useCallback((input: ManualAddInput): SavedTV => {
     return {
@@ -198,8 +234,61 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     };
   }, []);
 
+  const wakeSavedTv = useCallback(
+    async (tv: SavedTV): Promise<boolean> => {
+      if (tv.brand === "ir") return false;
+      if (!tv.mac) return false;
+      const normalized = normalizeMacAddress(tv.mac);
+      if (!normalized) return false;
+      setStatusMessage(`Sending wake packet to ${tv.name}...`);
+      const ok = await sendWakeOnLan(normalized);
+      if (ok) {
+        setStatusMessage(`Wake packet sent to ${tv.name}.`);
+      }
+      return ok;
+    },
+    []
+  );
+
+  const recoverTvAddress = useCallback(
+    async (tv: SavedTV): Promise<SavedTV | null> => {
+      if (tv.brand === "ir") return null;
+      await wakeSavedTv(tv).catch(() => false);
+      setStatusMessage(`Trying smart reconnect for ${tv.name}...`);
+
+      const discovered = await scanPorts(260, 10).catch(() => []);
+      const candidates = discovered
+        .filter((d) => d.online && d.brand === tv.brand)
+        .map((d) => ({ ...d, score: scoreRecoveryCandidate(tv, d) }))
+        .sort((a, b) => b.score - a.score);
+
+      if (candidates.length === 0) return null;
+
+      const best = candidates[0];
+      if (!best?.ip) return null;
+      if (best.ip === tv.ip) return tv;
+
+      const recovered: SavedTV = {
+        ...tv,
+        ip: best.ip,
+        model: tv.model ?? best.model,
+        lastSeen: now()
+      };
+
+      const nextTVs = upsertTV(tvs, recovered);
+      await persistTVs(nextTVs);
+      setStatusMessage(`Found ${tv.name} at ${best.ip}. Reconnecting...`);
+      return recovered;
+    },
+    [persistTVs, tvs, wakeSavedTv]
+  );
+
   const connectUsingTV = useCallback(
-    async (tv: SavedTV, mode: "manual" | "saved"): Promise<SavedTV | null> => {
+    async (
+      tv: SavedTV,
+      mode: "manual" | "saved",
+      options?: { allowRecovery?: boolean }
+    ): Promise<SavedTV | null> => {
       setConnecting(true);
       setStatusMessage(null);
       try {
@@ -236,6 +325,14 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             setStatusMessage("First attempt failed, retrying connection...");
             await sleep(600);
           } else {
+            const allowRecovery =
+              mode === "saved" && tv.brand !== "ir" && options?.allowRecovery !== false;
+            if (allowRecovery) {
+              const recovered = await recoverTvAddress(tv);
+              if (recovered && recovered.ip !== tv.ip) {
+                return await connectUsingTV(recovered, "saved", { allowRecovery: false });
+              }
+            }
             setStatusMessage(connectFailureFor(tv, result.message));
             return null;
           }
@@ -248,6 +345,7 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
         const merged: SavedTV = {
           ...tv,
+          mac: connectedResult.mac ?? tv.mac,
           authToken: connectedResult.authToken ?? tv.authToken,
           clientKey: connectedResult.clientKey ?? tv.clientKey,
           certificate: connectedResult.certificate ?? tv.certificate,
@@ -272,7 +370,7 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         setConnecting(false);
       }
     },
-    [persistTVs, settings, tvs]
+    [persistTVs, recoverTvAddress, settings, tvs]
   );
 
   const addOrConnectManualTV = useCallback(
@@ -330,6 +428,7 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
         const merged: SavedTV = {
           ...pendingPairing.tv,
+          mac: result.mac ?? pendingPairing.tv.mac,
           authToken: result.authToken ?? pendingPairing.tv.authToken,
           clientKey: result.clientKey ?? pendingPairing.tv.clientKey ?? pendingPairing.tv.authKey,
           certificate: result.certificate ?? pendingPairing.tv.certificate,
@@ -375,6 +474,26 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     [activeAdapter, activeTvId, tvs]
   );
 
+  const sendText = useCallback(
+    async (text: string): Promise<void> => {
+      if (!activeAdapter?.sendText) {
+        throw new Error("Text input is not supported for this TV brand yet.");
+      }
+      await activeAdapter.sendText(text);
+    },
+    [activeAdapter]
+  );
+
+  const launchStreamingApp = useCallback(
+    async (app: StreamingApp): Promise<void> => {
+      if (!activeAdapter?.launchApp) {
+        throw new Error("Quick app launch is not supported for this TV brand yet.");
+      }
+      await activeAdapter.launchApp(app);
+    },
+    [activeAdapter]
+  );
+
   const disconnect = useCallback(async (): Promise<void> => {
     await activeAdapter?.disconnect();
     setActiveAdapter(null);
@@ -389,6 +508,84 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     [persistTVs, tvs]
   );
 
+  const toggleFavoriteTV = useCallback(
+    async (tvId: string): Promise<void> => {
+      const next = tvs.map((tv) =>
+        tv.id === tvId ? { ...tv, favorite: !tv.favorite } : tv
+      );
+      await persistTVs(next);
+    },
+    [persistTVs, tvs]
+  );
+
+  const setStartupTV = useCallback(
+    async (tvId: string | null): Promise<void> => {
+      const nextSettings: AppSettings = {
+        ...settings,
+        startupTvId: tvId ?? undefined,
+        launchTarget: tvId
+          ? "startup_tv"
+          : settings.launchTarget === "startup_tv"
+            ? "home"
+            : settings.launchTarget
+      };
+      setSettings(nextSettings);
+      await saveSettings(nextSettings);
+    },
+    [settings]
+  );
+
+  const setTVMac = useCallback(
+    async (tvId: string, mac: string): Promise<void> => {
+      const normalized = normalizeMacAddress(mac);
+      if (!normalized) {
+        setStatusMessage("Invalid MAC address format. Example: AA:BB:CC:DD:EE:FF");
+        return;
+      }
+      const next = tvs.map((tv) => (tv.id === tvId ? { ...tv, mac: normalized } : tv));
+      await persistTVs(next);
+      setStatusMessage("Wake MAC saved.");
+    },
+    [persistTVs, tvs]
+  );
+
+  const wakeTV = useCallback(
+    async (tvId: string): Promise<boolean> => {
+      const tv = tvs.find((item) => item.id === tvId);
+      if (!tv) {
+        setStatusMessage("TV entry not found.");
+        return false;
+      }
+      if (!tv.mac) {
+        setStatusMessage(`No MAC address saved for ${tv.name}. Add it in Settings first.`);
+        return false;
+      }
+      const ok = await wakeSavedTv(tv);
+      if (!ok) {
+        setStatusMessage(`Could not send wake packet for ${tv.name}. Check MAC and WiFi.`);
+      }
+      return ok;
+    },
+    [tvs, wakeSavedTv]
+  );
+
+  const recoverSavedTV = useCallback(
+    async (tvId: string): Promise<SavedTV | null> => {
+      const tv = tvs.find((item) => item.id === tvId);
+      if (!tv) {
+        setStatusMessage("TV entry not found.");
+        return null;
+      }
+      const recovered = await recoverTvAddress(tv);
+      if (!recovered) {
+        setStatusMessage(`Could not auto-recover ${tv.name}. Open Advanced Help for steps.`);
+        return null;
+      }
+      return await connectUsingTV(recovered, "saved", { allowRecovery: false });
+    },
+    [connectUsingTV, recoverTvAddress, tvs]
+  );
+
   const forgetTV = useCallback(
     async (tvId: string): Promise<void> => {
       const next = tvs.filter((tv) => tv.id !== tvId);
@@ -396,8 +593,21 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       if (activeTvId === tvId) {
         await disconnect();
       }
+      if (settings.startupTvId === tvId || settings.lastTvId === tvId) {
+        const nextSettings: AppSettings = {
+          ...settings,
+          startupTvId: settings.startupTvId === tvId ? undefined : settings.startupTvId,
+          lastTvId: settings.lastTvId === tvId ? undefined : settings.lastTvId,
+          launchTarget:
+            settings.launchTarget === "startup_tv" && settings.startupTvId === tvId
+              ? "home"
+              : settings.launchTarget
+        };
+        setSettings(nextSettings);
+        await saveSettings(nextSettings);
+      }
     },
-    [activeTvId, disconnect, persistTVs, tvs]
+    [activeTvId, disconnect, persistTVs, settings, tvs]
   );
 
   const updateSettings = useCallback(
@@ -416,6 +626,8 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     () => tvs.find((tv) => tv.id === activeTvId) ?? null,
     [activeTvId, tvs]
   );
+  const canSendText = Boolean(activeAdapter?.sendText);
+  const canLaunchApps = Boolean(activeAdapter?.launchApp);
 
   const value = useMemo<TVContextValue>(
     () => ({
@@ -423,18 +635,28 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       tvs,
       settings,
       activeTv,
+      canSendText,
+      canLaunchApps,
       connecting,
       statusMessage,
       pairingPrompt: pendingPairing?.prompt ?? null,
       bootstrapScanRequested,
       consumeBootstrapScanRequest: () => setBootstrapScanRequested(false),
+      cancelPairing,
       clearStatus,
       addOrConnectManualTV,
       connectToSavedTV,
       submitPairingCode,
       disconnect,
       sendKey,
+      sendText,
+      launchStreamingApp,
+      wakeTV,
+      recoverSavedTV,
       renameTV,
+      toggleFavoriteTV,
+      setStartupTV,
+      setTVMac,
       forgetTV,
       updateSettings
     }),
@@ -443,17 +665,27 @@ export const TVProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       tvs,
       settings,
       activeTv,
+      canSendText,
+      canLaunchApps,
       connecting,
       statusMessage,
       pendingPairing,
       bootstrapScanRequested,
+      cancelPairing,
       clearStatus,
       addOrConnectManualTV,
       connectToSavedTV,
       submitPairingCode,
       disconnect,
       sendKey,
+      sendText,
+      launchStreamingApp,
+      wakeTV,
+      recoverSavedTV,
       renameTV,
+      toggleFavoriteTV,
+      setStartupTV,
+      setTVMac,
       forgetTV,
       updateSettings
     ]

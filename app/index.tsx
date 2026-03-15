@@ -4,16 +4,17 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import type { TVBrand } from "@/adapters";
 import { checkIRAvailable } from "@/adapters/ir";
 import { TVCard } from "@/components/TVCard";
@@ -36,7 +37,7 @@ const manualBrandHelp: Record<TVBrand, string> = {
   roku: "Roku: just tap Connect. No setup needed.",
   samsung: "Samsung: tap Connect, then press Allow on your TV when prompted.",
   lg: "LG: tap Connect, then press Accept on your TV when prompted.",
-  sony: "Sony: tap Connect to auto-pair. If it fails, enter your TV's Pre-Shared Key below (default is usually 0000). Find it in TV Settings → Network → Home Network → IP Control.",
+  sony: "Sony: tap Connect to auto-pair. If it fails, set up your TV first:\n1. Settings → Network & Internet → Home Network → IP Control\n2. Authentication → Normal and Pre-Shared Key\n3. Pre-Shared Key → set to 0000\n4. Enable Remote Start (in Network & Internet menu)\nThen enter 0000 as the Pre-Shared Key below and tap Connect.",
   vizio: "Vizio: tap Connect. TV will show a PIN — enter it here.",
   androidtv: "Android TV: tap Connect. TV will show a code — enter it here.",
   firetv: "Fire TV: enable ADB Debugging in Settings > Developer Options, then tap Connect.",
@@ -44,13 +45,16 @@ const manualBrandHelp: Record<TVBrand, string> = {
 };
 
 export default function HomeScreen() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const {
     hydrated,
     tvs,
+    settings,
     connecting,
     statusMessage,
     clearStatus,
+    cancelPairing,
     pairingPrompt,
     submitPairingCode,
     addOrConnectManualTV,
@@ -71,12 +75,55 @@ export default function HomeScreen() {
   const [pairingCode, setPairingCode] = useState("");
 
   useEffect(() => {
-    if (!hydrated) return;
-    if (bootstrapScanRequested) {
-      scan();
-      consumeBootstrapScanRequest();
-    }
-  }, [hydrated, bootstrapScanRequested, consumeBootstrapScanRequest, scan]);
+    if (!hydrated || !bootstrapScanRequested) return;
+    let cancelled = false;
+
+    const resolveStartupTV = () => {
+      if (settings.launchTarget === "home") return null;
+      if (settings.launchTarget === "startup_tv" && settings.startupTvId) {
+        return tvs.find((tv) => tv.id === settings.startupTvId) ?? null;
+      }
+      if (settings.launchTarget === "favorite") {
+        return tvs.find((tv) => tv.favorite) ?? null;
+      }
+      if (settings.launchTarget === "last" && settings.lastTvId) {
+        return tvs.find((tv) => tv.id === settings.lastTvId) ?? null;
+      }
+      return null;
+    };
+
+    const run = async () => {
+      const startupTV = resolveStartupTV();
+      if (startupTV) {
+        const connected = await connectToSavedTV(startupTV.id);
+        if (connected && !cancelled) {
+          consumeBootstrapScanRequest();
+          router.replace(`/remote/${connected.id}` as never);
+          return;
+        }
+      }
+      if (!cancelled) {
+        scan();
+        consumeBootstrapScanRequest();
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    hydrated,
+    bootstrapScanRequested,
+    connectToSavedTV,
+    consumeBootstrapScanRequest,
+    router,
+    scan,
+    settings.lastTvId,
+    settings.launchTarget,
+    settings.startupTvId,
+    tvs
+  ]);
 
   useEffect(() => {
     if (Platform.OS === "android") {
@@ -84,7 +131,27 @@ export default function HomeScreen() {
     }
   }, []);
 
-  const knownDevices = useMemo(() => devices, [devices]);
+  const knownDevices = useMemo(() => {
+    const savedByBrandIp = new Map(
+      tvs.map((tv) => [`${tv.brand}:${tv.ip.trim()}`, tv] as const)
+    );
+
+    return [...devices]
+      .map((device) => {
+        const saved = savedByBrandIp.get(`${device.brand}:${device.ip.trim()}`);
+        return {
+          ...device,
+          favorite: Boolean(saved?.favorite),
+          startup: Boolean(saved && settings.startupTvId === saved.id),
+        };
+      })
+      .sort((a, b) => {
+        if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;
+        if (a.startup !== b.startup) return a.startup ? -1 : 1;
+        if (a.online !== b.online) return a.online ? -1 : 1;
+        return b.lastSeen - a.lastSeen;
+      });
+  }, [devices, settings.startupTvId, tvs]);
 
   const handleConnectResult = (tvId: string | null) => {
     if (!tvId) return;
@@ -221,7 +288,7 @@ export default function HomeScreen() {
       <FlatList
         data={knownDevices}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, { paddingBottom: 140 + insets.bottom }]}
         ListEmptyComponent={
           <Text style={styles.empty}>
             {loading
@@ -230,12 +297,17 @@ export default function HomeScreen() {
           </Text>
         }
         renderItem={({ item }) => (
-          <TVCard item={item} onPress={() => onDevicePress(item)} />
+          <TVCard
+            item={item}
+            isFavorite={item.favorite}
+            isStartup={item.startup}
+            onPress={() => onDevicePress(item)}
+          />
         )}
       />
 
       <Pressable
-        style={[styles.addBtn, connecting && styles.disabled]}
+        style={[styles.addBtn, { bottom: Math.max(theme.spacing.lg, insets.bottom + 10) }, connecting && styles.disabled]}
         disabled={connecting}
         onPress={() => {
           setManualName("");
@@ -250,9 +322,20 @@ export default function HomeScreen() {
       </Pressable>
 
       {/* Manual Add Modal */}
-      <Modal visible={manualOpen} animationType="slide" transparent>
-        <View style={styles.modalBackdrop}>
-          <ScrollView contentContainerStyle={styles.modalScrollContent}>
+      <Modal
+        visible={manualOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setManualOpen(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <ScrollView
+            contentContainerStyle={styles.modalScrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
             <View style={styles.modal}>
               <Text style={styles.modalTitle}>Add TV</Text>
 
@@ -347,12 +430,20 @@ export default function HomeScreen() {
               </View>
             </View>
           </ScrollView>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Pairing Code Modal */}
-      <Modal visible={Boolean(pairingPrompt)} animationType="fade" transparent>
-        <View style={styles.modalBackdrop}>
+      <Modal
+        visible={Boolean(pairingPrompt)}
+        animationType="fade"
+        transparent
+        onRequestClose={cancelPairing}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
           <View style={styles.modal}>
             <Text style={styles.modalTitle}>{pairingPrompt?.title}</Text>
             <Text style={styles.modalMessage}>{pairingPrompt?.message}</Text>
@@ -371,6 +462,9 @@ export default function HomeScreen() {
               keyboardType="number-pad"
             />
             <View style={styles.modalActions}>
+              <Pressable style={styles.secondaryBtn} onPress={cancelPairing}>
+                <Text style={styles.secondaryBtnText}>Cancel</Text>
+              </Pressable>
               <Pressable
                 style={[styles.primaryBtn, connecting && styles.disabled]}
                 disabled={connecting}
@@ -382,7 +476,7 @@ export default function HomeScreen() {
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

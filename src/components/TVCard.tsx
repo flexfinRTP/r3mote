@@ -2,13 +2,16 @@ import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { DiscoveryDevice } from "@/discovery/types";
 import { theme } from "@/theme";
+import { AppIcon } from "./AppIcon";
 
 type Props = {
   item: DiscoveryDevice;
+  isFavorite?: boolean;
+  isStartup?: boolean;
   onPress: () => void | Promise<void>;
 };
 
-export const TVCard: React.FC<Props> = ({ item, onPress }) => {
+export const TVCard: React.FC<Props> = ({ item, isFavorite, isStartup, onPress }) => {
   return (
     <Pressable style={({ pressed }) => [styles.card, pressed && styles.pressed]} onPress={onPress}>
       <View style={styles.row}>
@@ -24,6 +27,20 @@ export const TVCard: React.FC<Props> = ({ item, onPress }) => {
             {item.brand.toUpperCase()} {item.model ? `· ${item.model}` : ""} · {item.ip}
           </Text>
         </View>
+        {isFavorite ? (
+          <AppIcon
+            name="star"
+            size={16}
+            color={theme.colors.warning}
+          />
+        ) : null}
+        {isStartup ? (
+          <AppIcon
+            name="rocket-launch"
+            size={15}
+            color={theme.colors.primary}
+          />
+        ) : null}
       </View>
     </Pressable>
   );

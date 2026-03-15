@@ -48,8 +48,6 @@ const tcpProbe = (ip: string, port: number, timeoutMs: number): Promise<boolean>
   });
 };
 
-const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 interface ProbeHit {
   brand: TVBrand;
   name: string;
@@ -140,8 +138,8 @@ export const getLocalIp = async (): Promise<string | null> => {
 };
 
 export const scanPorts = async (
-  timeoutPerHost = 600,
-  concurrency = 6,
+  timeoutPerHost = 300,
+  concurrency = 12,
   callbacks?: PortScanCallbacks
 ): Promise<DiscoveryDevice[]> => {
   const localIp = await getLocalIp();
@@ -178,35 +176,37 @@ export const scanPorts = async (
     callbacks?.onFound?.(device);
   };
 
-  // ALL probes run sequentially per IP to avoid native bridge overload
   const probeIp = async (ip: string) => {
     try {
-      const roku = await probeRoku(ip, timeoutPerHost).catch(() => null);
-      if (roku) { addHit(ip, roku); return; }
+      // Wave 1: ALL HTTP probes in parallel.
+      // On a LAN, connection-refused returns in <10ms so this is nearly
+      // free for IPs that exist but aren't TVs. For dead IPs the timeout
+      // fires once at 300ms instead of 4×300ms sequential.
+      const httpResults = await Promise.all([
+        probeRoku(ip, timeoutPerHost).catch(() => null),
+        probeSamsung(ip, timeoutPerHost).catch(() => null),
+        probeSony(ip, timeoutPerHost).catch(() => null),
+        probeLG(ip, timeoutPerHost).catch(() => null),
+      ]);
 
-      const samsung = await probeSamsung(ip, timeoutPerHost).catch(() => null);
-      if (samsung) { addHit(ip, samsung); return; }
+      for (const hit of httpResults) {
+        if (hit) { addHit(ip, hit); return; }
+      }
 
-      const sony = await probeSony(ip, timeoutPerHost).catch(() => null);
-      if (sony) { addHit(ip, sony); return; }
+      // Wave 2: TCP probes in parallel (only when no HTTP hit)
+      const [atv, vizio, fire] = await Promise.all([
+        tcpProbe(ip, 6466, timeoutPerHost).catch(() => false),
+        tcpProbe(ip, 7345, timeoutPerHost).catch(() => false),
+        tcpProbe(ip, 5555, timeoutPerHost).catch(() => false),
+      ]);
 
-      const lg = await probeLG(ip, timeoutPerHost).catch(() => null);
-      if (lg) { addHit(ip, lg); return; }
-
-      // TCP probes only if no HTTP hit
-      try {
-        if (await tcpProbe(ip, 6466, timeoutPerHost)) {
-          addHit(ip, { brand: "androidtv", name: "Android TV" });
-        } else if (await tcpProbe(ip, 7345, timeoutPerHost)) {
-          addHit(ip, { brand: "vizio", name: "Vizio TV" });
-        } else if (await tcpProbe(ip, 5555, timeoutPerHost)) {
-          addHit(ip, { brand: "firetv", name: "Fire TV" });
-        }
-      } catch {}
+      if (atv) addHit(ip, { brand: "androidtv", name: "Android TV" });
+      else if (vizio) addHit(ip, { brand: "vizio", name: "Vizio TV" });
+      else if (fire) addHit(ip, { brand: "firetv", name: "Fire TV" });
     } catch {}
   };
 
-  // Worker pool — 6 concurrent, all probes sequential within each worker
+  // Worker pool — 12 concurrent workers, probes parallel within each
   let idx = 0;
   const workers = Array.from({ length: Math.min(concurrency, ips.length) }, async () => {
     while (true) {
@@ -215,8 +215,6 @@ export const scanPorts = async (
       await probeIp(ips[myIdx]);
       scanned++;
       callbacks?.onProgress?.(scanned, total);
-      // Small pause between IPs to let native bridge breathe
-      await pause(5);
     }
   });
   await Promise.all(workers);
